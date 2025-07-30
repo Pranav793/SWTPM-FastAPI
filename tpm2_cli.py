@@ -48,6 +48,23 @@ def main():
     # Workflow command
     workflow_parser = subparsers.add_parser("workflow", help="Execute complete workflow")
     
+
+    
+    # Encrypt command
+    encrypt_parser = subparsers.add_parser("encrypt", help="Encrypt data")
+    encrypt_parser.add_argument("--context", "-c", required=True, help="Key context file")
+    encrypt_parser.add_argument("--data", "-d", required=True, help="Data to encrypt (base64 encoded)")
+    encrypt_parser.add_argument("--output", "-o", default="encrypted.bin", help="Output encrypted file")
+    
+    # Decrypt command
+    decrypt_parser = subparsers.add_parser("decrypt", help="Decrypt data")
+    decrypt_parser.add_argument("--context", "-c", required=True, help="Key context file")
+    decrypt_parser.add_argument("--data", "-d", required=True, help="Encrypted data to decrypt (base64 encoded)")
+    decrypt_parser.add_argument("--output", "-o", default="decrypted.bin", help="Output decrypted file")
+    
+    # Full reset command
+    reset_parser = subparsers.add_parser("full-reset", help="Perform complete TPM reset")
+    
     args = parser.parse_args()
     
     if not args.command:
@@ -136,6 +153,36 @@ def main():
             print("  - rsa.ctx (loaded key context)")
             print(f"  - Persistent handle: {result['persistent_handle']}")
             sys.exit(0)
+            
+
+            
+        elif args.command == "encrypt":
+            result = tpm.encrypt_data(
+                context_file=args.context,
+                data=args.data,
+                encrypted_file=args.output
+            )
+            
+        elif args.command == "decrypt":
+            result = tpm.decrypt_data(
+                context_file=args.context,
+                encrypted_data=args.data,
+                decrypted_file=args.output
+            )
+            
+        elif args.command == "full-reset":
+            print("⚠️  WARNING: This will perform a complete TPM reset!")
+            print("   - All persistent keys will be removed")
+            print("   - All contexts will be cleared")
+            print("   - All authorizations will be reset")
+            print("   - This action cannot be undone!")
+            
+            confirm = input("Are you sure you want to continue? (yes/no): ")
+            if confirm.lower() != "yes":
+                print("Reset cancelled.")
+                sys.exit(0)
+            
+            result = tpm.full_reset()
         
         # Print result
         if result["success"]:

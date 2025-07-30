@@ -62,6 +62,18 @@ class VerifySignatureRequest(BaseModel):
     data: str  # base64 encoded data
     signature: str  # base64 encoded signature
 
+class EncryptDataRequest(BaseModel):
+    context_file: str
+    data: str  # base64 encoded data
+    encrypted_file: str = "encrypted.bin"
+
+class DecryptDataRequest(BaseModel):
+    context_file: str
+    encrypted_data: str  # base64 encoded encrypted data
+    decrypted_file: str = "decrypted.bin"
+
+
+
 # Health check endpoint
 @app.get("/")
 async def root():
@@ -234,6 +246,67 @@ async def verify_signature(request: VerifySignatureRequest):
             data=request.data,
             signature=request.signature
         )
+        
+        if result["success"]:
+            return JSONResponse(content=result, status_code=200)
+        else:
+            raise HTTPException(status_code=400, detail=result["error"])
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+@app.post("/tpm2/encrypt")
+async def encrypt_data(request: EncryptDataRequest):
+    """Encrypt data using a loaded RSA key"""
+    if tpm_api is None:
+        raise HTTPException(status_code=503, detail="TPM2 API not available")
+    
+    try:
+        result = tpm_api.encrypt_data(
+            context_file=request.context_file,
+            data=request.data,
+            encrypted_file=request.encrypted_file
+        )
+        
+        if result["success"]:
+            return JSONResponse(content=result, status_code=200)
+        else:
+            raise HTTPException(status_code=400, detail=result["error"])
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/tpm2/decrypt")
+async def decrypt_data(request: DecryptDataRequest):
+    """Decrypt data using a loaded RSA key"""
+    if tpm_api is None:
+        raise HTTPException(status_code=503, detail="TPM2 API not available")
+    
+    try:
+        result = tpm_api.decrypt_data(
+            context_file=request.context_file,
+            encrypted_data=request.encrypted_data,
+            decrypted_file=request.decrypted_file
+        )
+        
+        if result["success"]:
+            return JSONResponse(content=result, status_code=200)
+        else:
+            raise HTTPException(status_code=400, detail=result["error"])
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/tpm2/full-reset")
+async def full_reset():
+    """Perform a complete TPM reset - clears all contexts, persistent objects, and authorizations"""
+    if tpm_api is None:
+        raise HTTPException(status_code=503, detail="TPM2 API not available")
+    
+    try:
+        result = tpm_api.full_reset()
         
         if result["success"]:
             return JSONResponse(content=result, status_code=200)

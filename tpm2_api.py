@@ -446,6 +446,185 @@ class TPM2API:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    def encrypt_data(self, context_file: str, data: str, encrypted_file: str = "encrypted.bin") -> Dict[str, Any]:
+        """
+        Encrypt data using a loaded RSA key
+        
+        Args:
+            context_file: Key context file (RSA key)
+            data: Data to encrypt (base64 encoded)
+            encrypted_file: File to save the encrypted data
+            
+        Returns:
+            Dictionary with encryption result
+        """
+        try:
+            # Decode base64 data
+            decoded_data = base64.b64decode(data)
+            
+            # Create temporary file for data
+            with tempfile.NamedTemporaryFile(delete=False, mode='wb') as temp_file:
+                temp_file.write(decoded_data)
+                temp_data_file = temp_file.name
+            
+            try:
+                cmd = [
+                    'tpm2_rsaencrypt',
+                    '-c', context_file,
+                    '-o', encrypted_file,
+                    temp_data_file
+                ]
+                
+                result = self._run_command(cmd)
+                
+                if result['success']:
+                    # Read encrypted file
+                    with open(encrypted_file, 'rb') as f:
+                        encrypted_data = f.read()
+                    
+                    return {
+                        "success": True,
+                        "encrypted_data": base64.b64encode(encrypted_data).decode(),
+                        "encrypted_file": encrypted_file,
+                        "action": "data_encrypted"
+                    }
+                else:
+                    return result
+                    
+            finally:
+                # Clean up temporary file
+                os.unlink(temp_data_file)
+                
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def decrypt_data(self, context_file: str, encrypted_data: str, decrypted_file: str = "decrypted.bin") -> Dict[str, Any]:
+        """
+        Decrypt data using a loaded RSA key
+        
+        Args:
+            context_file: Key context file (RSA key)
+            encrypted_data: Encrypted data to decrypt (base64 encoded)
+            decrypted_file: File to save the decrypted data
+            
+        Returns:
+            Dictionary with decryption result
+        """
+        try:
+            # Decode base64 encrypted data
+            decoded_encrypted = base64.b64decode(encrypted_data)
+            
+            # Create temporary file for encrypted data
+            with tempfile.NamedTemporaryFile(delete=False, mode='wb') as temp_file:
+                temp_file.write(decoded_encrypted)
+                temp_encrypted_file = temp_file.name
+            
+            try:
+                cmd = [
+                    'tpm2_rsadecrypt',
+                    '-c', context_file,
+                    '-o', decrypted_file,
+                    temp_encrypted_file
+                ]
+                
+                result = self._run_command(cmd)
+                
+                if result['success']:
+                    # Read decrypted file
+                    with open(decrypted_file, 'rb') as f:
+                        decrypted_data = f.read()
+                    
+                    return {
+                        "success": True,
+                        "decrypted_data": base64.b64encode(decrypted_data).decode(),
+                        "decrypted_file": decrypted_file,
+                        "action": "data_decrypted"
+                    }
+                else:
+                    return result
+                    
+            finally:
+                # Clean up temporary file
+                os.unlink(temp_encrypted_file)
+                
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def full_reset(self) -> Dict[str, Any]:
+        """
+        Perform a complete TPM reset - clears all contexts, persistent objects, and authorizations
+        
+        Returns:
+            Dictionary with reset result
+        """
+        try:
+            results = {}
+            
+            # Step 1: Clear all persistent objects (common handles)
+            print("Clearing persistent objects...")
+            persistent_handles = [
+                0x81010001, 0x81010002, 0x81010003, 0x81010004, 0x81010005,
+                0x81010006, 0x81010007, 0x81010008, 0x81010009, 0x8101000A,
+                0x8101000B, 0x8101000C, 0x8101000D, 0x8101000E, 0x8101000F,
+                0x81010010, 0x81010011, 0x81010012, 0x81010013, 0x81010014
+            ]
+            
+            cleared_persistent = []
+            for handle in persistent_handles:
+                try:
+                    cmd = ['tpm2_evictcontrol', '-C', 'o', '-c', str(handle)]
+                    result = self._run_command(cmd)
+                    if result['success']:
+                        cleared_persistent.append(hex(handle))
+                    # Don't fail if handle doesn't exist - that's expected
+                except Exception:
+                    # Ignore errors for non-existent handles
+                    pass
+            
+            results["cleared_persistent"] = cleared_persistent
+            
+            # Step 2: Clear all contexts
+            print("Clearing all contexts...")
+            flush_result = self.flush_context("all")
+            results["flush_contexts"] = flush_result
+            
+            # Step 3: Clear owner authorization
+            print("Clearing owner authorization...")
+            try:
+                cmd = ['tpm2_clear', '-c', 'o']
+                result = self._run_command(cmd)
+                results["clear_owner"] = result
+            except Exception as e:
+                results["clear_owner"] = {"success": False, "error": str(e)}
+            
+            # Step 4: Clear endorsement authorization
+            print("Clearing endorsement authorization...")
+            try:
+                cmd = ['tpm2_clear', '-c', 'e']
+                result = self._run_command(cmd)
+                results["clear_endorsement"] = result
+            except Exception as e:
+                results["clear_endorsement"] = {"success": False, "error": str(e)}
+            
+            # Step 5: Clear platform authorization
+            print("Clearing platform authorization...")
+            try:
+                cmd = ['tpm2_clear', '-c', 'p']
+                result = self._run_command(cmd)
+                results["clear_platform"] = result
+            except Exception as e:
+                results["clear_platform"] = {"success": False, "error": str(e)}
+            
+            return {
+                "success": True,
+                "message": "TPM full reset completed",
+                "results": results,
+                "action": "tpm_full_reset"
+            }
+            
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
 # Example usage
 if __name__ == "__main__":
     # Initialize TPM2 API
