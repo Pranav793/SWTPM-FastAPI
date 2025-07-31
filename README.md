@@ -1,5 +1,5 @@
 # TPM2 Python API - System Call Based Implementation
-
+<!-- 
 ## Overview
 
 This project provides a Python API for TPM2 operations using system calls to the `tpm2-tools` command-line utilities instead of the problematic `tpm2-pytss` Python library. This approach is much more reliable and works perfectly in Docker containers with software TPM emulators.
@@ -34,7 +34,14 @@ The project includes a complete Docker setup with:
 - TPM2-TSS library (built from source)
 - swtpm (software TPM emulator)
 - tpm2-tools (command-line utilities)
-- FastAPI and Python dependencies
+- FastAPI and Python dependencies -->
+
+
+## Key Features
+- **REST API**: Access TPM2 functionality via a FastAPI-based REST API for easy integration with other services and automation.
+- **CLI Interface**: Use the Python command-line interface (CLI) for direct TPM2 operations from the terminal or scripts.
+
+
 
 ### Building and Running
 
@@ -328,7 +335,7 @@ if encrypt_result.get("success"):
 else:
     print("❌ Encryption failed!")
 ```
-
+<!-- 
 ## Key Advantages
 
 1. **Reliability**: No complex Python library dependencies
@@ -336,7 +343,7 @@ else:
 3. **Simplicity**: Uses proven command-line tools
 4. **Docker Friendly**: Perfect for containerized deployments
 5. **Error Handling**: Better error messages and debugging
-6. **Extensibility**: Easy to add new TPM2 operations
+6. **Extensibility**: Easy to add new TPM2 operations -->
 
 ## Limitations
 
@@ -375,7 +382,7 @@ curl http://localhost:8000/health
 # Test complete workflow
 curl -X POST http://localhost:8000/tpm2/workflow/complete
 ```
-
+<!-- 
 ## Files Structure
 
 - `tpm2_api.py` - Core TPM2 API using system calls
@@ -393,6 +400,6 @@ curl -X POST http://localhost:8000/tpm2/workflow/complete
 ✅ **TPM Information**: Working  
 ✅ **REST API**: Working  
 ✅ **Docker Container**: Working  
-✅ **System Call Approach**: Working  
-
-The system-call-based approach successfully eliminates the dependency issues with `tpm2-pytss` and provides a reliable, containerized TPM2 API solution. 
+✅ **System Call Approach**: Working   -->
+<!-- 
+The system-call-based approach successfully eliminates the dependency issues with `tpm2-pytss` and provides a reliable, containerized TPM2 API solution.  -->
