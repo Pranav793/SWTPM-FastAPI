@@ -402,3 +402,23 @@ if __name__ == "__main__":
         reload=True,
         log_level="info"
     ) 
+
+
+
+# 1. docker run command
+#    ↓
+# 2. entrypoint.sh starts
+#    ↓
+# 3. DBus starts
+#    ↓
+# 4. SWTPM starts (port 2321)
+#    ↓
+# 5. TPM2-ABRMD starts
+#    ↓
+# 6. Command line argument check
+#    ↓
+# 7. python3 /opt/tpm2_rest_api.py executes
+#    ↓
+# 8. uvicorn.run() starts FastAPI server
+#    ↓
+# 9. FastAPI listens on port 8000
