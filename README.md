@@ -49,9 +49,19 @@ The project includes a complete Docker setup with:
 # Build the Docker image
 docker build -t tpm2-api .
 
-# Run the container
+# Run the container for REST API
 docker run -d --name tpm2-test -p 8000:8000 tpm2-api python3 /opt/tpm2_rest_api.py
+
+# Run the container for interactive CLI
+# Start container and get a bash shell
+docker run --rm -it tpm2-api bash
+# With volume mount for file sharing
+docker run --rm -it -v $(pwd):/workspace -w /workspace tpm2-api bash
+
+# Delete the container and image
+docker rm -f tpm2-test tpm2-cli 2>/dev/null; docker rmi -f tpm2-api 2>/dev/null
 ```
+
 
 ## API Endpoints
 
@@ -101,7 +111,7 @@ curl -X POST -H "Content-Type: application/json" \
 ### Make Key Persistent (EvictControl)
 ```bash
 curl -X POST -H "Content-Type: application/json" \
-  -d '{"context_file": "loaded_key.ctx", "persistent_handle": 0x81010001}' \
+  -d '{"context_file": "loaded_key.ctx", "persistent_handle": "0x81010001"}' \
   http://localhost:8000/tpm2/make-persistent
 ```
 

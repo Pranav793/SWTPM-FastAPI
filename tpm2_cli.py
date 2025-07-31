@@ -14,7 +14,7 @@ def main():
     
     # Create primary key command
     primary_parser = subparsers.add_parser("create-primary", help="Create a primary key")
-    primary_parser.add_argument("--hierarchy", "-h", default="o", help="TPM hierarchy (o/e/p)")
+    primary_parser.add_argument("--hierarchy", default="o", help="TPM hierarchy (o/e/p)")
     primary_parser.add_argument("--output", "-o", default="primary.ctx", help="Output context file")
     
     # Create key command

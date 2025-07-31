@@ -5,8 +5,8 @@ TPM2 REST API - FastAPI wrapper for TPM2 operations
 
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
-from typing import Optional, Dict, Any
+from pydantic import BaseModel, validator
+from typing import Optional, Dict, Any, Union
 import uvicorn
 import os
 import json
@@ -47,7 +47,27 @@ class LoadKeyRequest(BaseModel):
 
 class PersistentRequest(BaseModel):
     context_file: str
-    persistent_handle: int = 0x81010001
+    persistent_handle: Union[int, str] = 0x81010001
+    
+    @validator('persistent_handle', pre=True)
+    def parse_persistent_handle(cls, v):
+        if isinstance(v, int):
+            return v
+        elif isinstance(v, str):
+            # Handle hexadecimal strings (e.g., "0x81010001")
+            if v.startswith('0x') or v.startswith('0X'):
+                try:
+                    return int(v, 16)
+                except ValueError:
+                    raise ValueError(f"Invalid hexadecimal value: {v}")
+            # Handle decimal strings
+            else:
+                try:
+                    return int(v)
+                except ValueError:
+                    raise ValueError(f"Invalid integer value: {v}")
+        else:
+            raise ValueError(f"persistent_handle must be an integer or string, got {type(v)}")
 
 class FlushContextRequest(BaseModel):
     context_type: str = "transient"
