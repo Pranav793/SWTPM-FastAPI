@@ -157,9 +157,9 @@ class TPM2API:
         
         Args:
             parent_context: Parent key context file
-            key_type: Type of key ('rsa', 'ecc')
-            public_file: File to save the public key
-            private_file: File to save the private key
+            key_type: Type of key ('rsa', 'ecc', 'aes128', 'aes256')
+            public_file: File to save the public key (for RSA/ECC) or key context (for AES)
+            private_file: File to save the private key (for RSA/ECC) or not used (for AES)
             
         Returns:
             Dictionary with key information
@@ -167,30 +167,55 @@ class TPM2API:
         try:
             if key_type.lower() == "rsa":
                 key_alg = "rsa2048"
+                cmd = [
+                    'tpm2_create',
+                    '-C', parent_context,
+                    '-G', key_alg,
+                    '-u', public_file,
+                    '-r', private_file
+                ]
             elif key_type.lower() == "ecc":
                 key_alg = "ecc256"
+                cmd = [
+                    'tpm2_create',
+                    '-C', parent_context,
+                    '-G', key_alg,
+                    '-u', public_file,
+                    '-r', private_file
+                ]
+            elif key_type.lower() in ["aes128", "aes256"]:
+                # For AES keys, we use tpm2_createprimary to create a symmetric key
+                # AES keys are stored directly as context files
+                key_size = "128" if key_type.lower() == "aes128" else "256"
+                cmd = [
+                    'tpm2_createprimary',
+                    '-C', parent_context,
+                    '-G', f'aes{key_size}',
+                    '-c', public_file  # For AES, we save the context directly
+                ]
             else:
                 return {"success": False, "error": f"Unsupported key type: {key_type}"}
-            
-            cmd = [
-                'tpm2_create',
-                '-C', parent_context,
-                '-G', key_alg,
-                '-u', public_file,
-                '-r', private_file
-            ]
             
             result = self._run_command(cmd)
             
             if result['success']:
-                return {
-                    "success": True,
-                    "public_file": public_file,
-                    "private_file": private_file,
-                    "key_type": key_type,
-                    "parent_context": parent_context,
-                    "action": "key_created"
-                }
+                if key_type.lower().startswith("aes"):
+                    return {
+                        "success": True,
+                        "context_file": public_file,  # For AES, this is the context file
+                        "key_type": key_type,
+                        "parent_context": parent_context,
+                        "action": "aes_key_created"
+                    }
+                else:
+                    return {
+                        "success": True,
+                        "public_file": public_file,
+                        "private_file": private_file,
+                        "key_type": key_type,
+                        "parent_context": parent_context,
+                        "action": "key_created"
+                    }
             else:
                 return result
                 
@@ -548,6 +573,683 @@ class TPM2API:
                 os.unlink(temp_encrypted_file)
                 
         except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def encrypt_data_aes(self, context_file: str, data: str, encrypted_file: str = "encrypted_aes.bin") -> Dict[str, Any]:
+        """
+        Encrypt data using a loaded AES key
+        
+        Args:
+            context_file: Key context file (AES key)
+            data: Data to encrypt (base64 encoded)
+            encrypted_file: File to save the encrypted data
+            
+        Returns:
+            Dictionary with encryption result
+        """
+        try:
+            # Decode base64 data
+            decoded_data = base64.b64decode(data)
+            
+            # Create temporary file for data
+            with tempfile.NamedTemporaryFile(delete=False, mode='wb') as temp_file:
+                temp_file.write(decoded_data)
+                temp_data_file = temp_file.name
+            
+            try:
+                cmd = [
+                    'tpm2_encryptdecrypt',
+                    '-c', context_file,
+                    '-d', temp_data_file,
+                    '-o', encrypted_file
+                ]
+                
+                result = self._run_command(cmd)
+                
+                if result['success']:
+                    # Read encrypted file
+                    with open(encrypted_file, 'rb') as f:
+                        encrypted_data = f.read()
+                    
+                    return {
+                        "success": True,
+                        "encrypted_data": base64.b64encode(encrypted_data).decode(),
+                        "encrypted_file": encrypted_file,
+                        "action": "data_encrypted_aes"
+                    }
+                else:
+                    return result
+                    
+            finally:
+                # Clean up temporary file
+                os.unlink(temp_data_file)
+                
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def decrypt_data_aes(self, context_file: str, encrypted_data: str, decrypted_file: str = "decrypted_aes.bin") -> Dict[str, Any]:
+        """
+        Decrypt data using a loaded AES key
+        
+        Args:
+            context_file: Key context file (AES key)
+            encrypted_data: Encrypted data to decrypt (base64 encoded)
+            decrypted_file: File to save the decrypted data
+            
+        Returns:
+            Dictionary with decryption result
+        """
+        try:
+            # Decode base64 encrypted data
+            decoded_encrypted = base64.b64decode(encrypted_data)
+            
+            # Create temporary file for encrypted data
+            with tempfile.NamedTemporaryFile(delete=False, mode='wb') as temp_file:
+                temp_file.write(decoded_encrypted)
+                temp_encrypted_file = temp_file.name
+            
+            try:
+                cmd = [
+                    'tpm2_encryptdecrypt',
+                    '-c', context_file,
+                    '-d', temp_encrypted_file,
+                    '-o', decrypted_file,
+                    '--decrypt'
+                ]
+                
+                result = self._run_command(cmd)
+                
+                if result['success']:
+                    # Read decrypted file
+                    with open(decrypted_file, 'rb') as f:
+                        decrypted_data = f.read()
+                    
+                    return {
+                        "success": True,
+                        "decrypted_data": base64.b64encode(decrypted_data).decode(),
+                        "decrypted_file": decrypted_file,
+                        "action": "data_decrypted_aes"
+                    }
+                else:
+                    return result
+                    
+            finally:
+                # Clean up temporary file
+                os.unlink(temp_encrypted_file)
+                
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def create_encrypted_file_store(self, context_file: str, store_name: str = "file_store.json") -> Dict[str, Any]:
+        """
+        Create a new encrypted file store with an empty JSON structure
+        
+        Args:
+            context_file: Key context file (RSA key) for encryption
+            store_name: Name of the encrypted file store
+            
+        Returns:
+            Dictionary with creation result
+        """
+        try:
+            # Create empty JSON structure
+            empty_store = {}
+            json_data = json.dumps(empty_store, indent=2)
+            
+            # Encrypt the empty JSON
+            result = self.encrypt_data(context_file, base64.b64encode(json_data.encode()).decode(), store_name)
+            
+            if result['success']:
+                return {
+                    "success": True,
+                    "store_name": store_name,
+                    "message": "Encrypted file store created successfully",
+                    "action": "file_store_created"
+                }
+            else:
+                return result
+                
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def store_key_value(self, context_file: str, store_name: str, key: str, value: Any) -> Dict[str, Any]:
+        """
+        Store a key-value pair in the encrypted file store
+        
+        Args:
+            context_file: Key context file (RSA key) for encryption/decryption
+            store_name: Name of the encrypted file store
+            key: Key to store
+            value: Value to store (will be JSON serialized)
+            
+        Returns:
+            Dictionary with storage result
+        """
+        try:
+            # Step 1: Decrypt the existing file store
+            if os.path.exists(store_name):
+                # Read encrypted file
+                with open(store_name, 'rb') as f:
+                    encrypted_data = f.read()
+                
+                # Decrypt the data
+                decrypt_result = self.decrypt_data(
+                    context_file, 
+                    base64.b64encode(encrypted_data).decode(), 
+                    "temp_decrypted.json"
+                )
+                
+                if not decrypt_result['success']:
+                    return decrypt_result
+                
+                # Parse the decrypted JSON
+                with open("temp_decrypted.json", 'r') as f:
+                    store_data = json.load(f)
+            else:
+                # Create new empty store
+                store_data = {}
+            
+            # Step 2: Add/modify the key-value pair
+            store_data[key] = value
+            
+            # Step 3: Re-encrypt the updated data
+            json_data = json.dumps(store_data, indent=2)
+            encrypt_result = self.encrypt_data(
+                context_file, 
+                base64.b64encode(json_data.encode()).decode(), 
+                store_name
+            )
+            
+            # Clean up temporary file
+            if os.path.exists("temp_decrypted.json"):
+                os.unlink("temp_decrypted.json")
+            
+            if encrypt_result['success']:
+                return {
+                    "success": True,
+                    "key": key,
+                    "value": value,
+                    "store_name": store_name,
+                    "message": f"Key '{key}' stored successfully",
+                    "action": "key_value_stored"
+                }
+            else:
+                return encrypt_result
+                
+        except Exception as e:
+            # Clean up temporary file on error
+            if os.path.exists("temp_decrypted.json"):
+                os.unlink("temp_decrypted.json")
+            return {"success": False, "error": str(e)}
+
+    def retrieve_key_value(self, context_file: str, store_name: str, key: str) -> Dict[str, Any]:
+        """
+        Retrieve a key-value pair from the encrypted file store
+        
+        Args:
+            context_file: Key context file (RSA key) for decryption
+            store_name: Name of the encrypted file store
+            key: Key to retrieve
+            
+        Returns:
+            Dictionary with retrieval result
+        """
+        try:
+            if not os.path.exists(store_name):
+                return {"success": False, "error": f"File store '{store_name}' does not exist"}
+            
+            # Step 1: Read and decrypt the file store
+            with open(store_name, 'rb') as f:
+                encrypted_data = f.read()
+            
+            # Decrypt the data
+            decrypt_result = self.decrypt_data(
+                context_file, 
+                base64.b64encode(encrypted_data).decode(), 
+                "temp_decrypted.json"
+            )
+            
+            if not decrypt_result['success']:
+                return decrypt_result
+            
+            # Step 2: Parse the decrypted JSON and retrieve the key
+            with open("temp_decrypted.json", 'r') as f:
+                store_data = json.load(f)
+            
+            # Clean up temporary file
+            os.unlink("temp_decrypted.json")
+            
+            if key in store_data:
+                return {
+                    "success": True,
+                    "key": key,
+                    "value": store_data[key],
+                    "store_name": store_name,
+                    "action": "key_value_retrieved"
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": f"Key '{key}' not found in file store",
+                    "available_keys": list(store_data.keys())
+                }
+                
+        except Exception as e:
+            # Clean up temporary file on error
+            if os.path.exists("temp_decrypted.json"):
+                os.unlink("temp_decrypted.json")
+            return {"success": False, "error": str(e)}
+
+    def list_file_store_keys(self, context_file: str, store_name: str) -> Dict[str, Any]:
+        """
+        List all keys in the encrypted file store
+        
+        Args:
+            context_file: Key context file (RSA key) for decryption
+            store_name: Name of the encrypted file store
+            
+        Returns:
+            Dictionary with list of keys
+        """
+        try:
+            if not os.path.exists(store_name):
+                return {"success": False, "error": f"File store '{store_name}' does not exist"}
+            
+            # Step 1: Read and decrypt the file store
+            with open(store_name, 'rb') as f:
+                encrypted_data = f.read()
+            
+            # Decrypt the data
+            decrypt_result = self.decrypt_data(
+                context_file, 
+                base64.b64encode(encrypted_data).decode(), 
+                "temp_decrypted.json"
+            )
+            
+            if not decrypt_result['success']:
+                return decrypt_result
+            
+            # Step 2: Parse the decrypted JSON and get all keys
+            with open("temp_decrypted.json", 'r') as f:
+                store_data = json.load(f)
+            
+            # Clean up temporary file
+            os.unlink("temp_decrypted.json")
+            
+            return {
+                "success": True,
+                "keys": list(store_data.keys()),
+                "total_keys": len(store_data),
+                "store_name": store_name,
+                "action": "keys_listed"
+            }
+                
+        except Exception as e:
+            # Clean up temporary file on error
+            if os.path.exists("temp_decrypted.json"):
+                os.unlink("temp_decrypted.json")
+            return {"success": False, "error": str(e)}
+
+    def delete_key_value(self, context_file: str, store_name: str, key: str) -> Dict[str, Any]:
+        """
+        Delete a key-value pair from the encrypted file store
+        
+        Args:
+            context_file: Key context file (RSA key) for encryption/decryption
+            store_name: Name of the encrypted file store
+            key: Key to delete
+            
+        Returns:
+            Dictionary with deletion result
+        """
+        try:
+            if not os.path.exists(store_name):
+                return {"success": False, "error": f"File store '{store_name}' does not exist"}
+            
+            # Step 1: Read and decrypt the file store
+            with open(store_name, 'rb') as f:
+                encrypted_data = f.read()
+            
+            # Decrypt the data
+            decrypt_result = self.decrypt_data(
+                context_file, 
+                base64.b64encode(encrypted_data).decode(), 
+                "temp_decrypted.json"
+            )
+            
+            if not decrypt_result['success']:
+                return decrypt_result
+            
+            # Step 2: Parse the decrypted JSON and delete the key
+            with open("temp_decrypted.json", 'r') as f:
+                store_data = json.load(f)
+            
+            if key not in store_data:
+                # Clean up temporary file
+                os.unlink("temp_decrypted.json")
+                return {
+                    "success": False,
+                    "error": f"Key '{key}' not found in file store",
+                    "available_keys": list(store_data.keys())
+                }
+            
+            # Store the value before deletion for response
+            deleted_value = store_data[key]
+            del store_data[key]
+            
+            # Step 3: Re-encrypt the updated data
+            json_data = json.dumps(store_data, indent=2)
+            encrypt_result = self.encrypt_data(
+                context_file, 
+                base64.b64encode(json_data.encode()).decode(), 
+                store_name
+            )
+            
+            # Clean up temporary file
+            os.unlink("temp_decrypted.json")
+            
+            if encrypt_result['success']:
+                return {
+                    "success": True,
+                    "key": key,
+                    "deleted_value": deleted_value,
+                    "store_name": store_name,
+                    "message": f"Key '{key}' deleted successfully",
+                    "action": "key_value_deleted"
+                }
+            else:
+                return encrypt_result
+                
+        except Exception as e:
+            # Clean up temporary file on error
+            if os.path.exists("temp_decrypted.json"):
+                os.unlink("temp_decrypted.json")
+            return {"success": False, "error": str(e)}
+
+    def create_encrypted_file_store_aes(self, context_file: str, store_name: str = "file_store_aes.json") -> Dict[str, Any]:
+        """
+        Create a new encrypted file store using AES encryption
+        
+        Args:
+            context_file: Key context file (AES key) for encryption
+            store_name: Name of the encrypted file store
+            
+        Returns:
+            Dictionary with creation result
+        """
+        try:
+            # Create empty JSON structure
+            empty_store = {}
+            json_data = json.dumps(empty_store, indent=2)
+            
+            # Encrypt the empty JSON using AES
+            result = self.encrypt_data_aes(context_file, base64.b64encode(json_data.encode()).decode(), store_name)
+            
+            if result['success']:
+                return {
+                    "success": True,
+                    "store_name": store_name,
+                    "message": "AES encrypted file store created successfully",
+                    "action": "aes_file_store_created"
+                }
+            else:
+                return result
+                
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def store_key_value_aes(self, context_file: str, store_name: str, key: str, value: Any) -> Dict[str, Any]:
+        """
+        Store a key-value pair in the AES encrypted file store
+        
+        Args:
+            context_file: Key context file (AES key) for encryption/decryption
+            store_name: Name of the encrypted file store
+            key: Key to store
+            value: Value to store (will be JSON serialized)
+            
+        Returns:
+            Dictionary with storage result
+        """
+        try:
+            # Step 1: Decrypt the existing file store
+            if os.path.exists(store_name):
+                # Read encrypted file
+                with open(store_name, 'rb') as f:
+                    encrypted_data = f.read()
+                
+                # Decrypt the data using AES
+                decrypt_result = self.decrypt_data_aes(
+                    context_file, 
+                    base64.b64encode(encrypted_data).decode(), 
+                    "temp_decrypted_aes.json"
+                )
+                
+                if not decrypt_result['success']:
+                    return decrypt_result
+                
+                # Parse the decrypted JSON
+                with open("temp_decrypted_aes.json", 'r') as f:
+                    store_data = json.load(f)
+            else:
+                # Create new empty store
+                store_data = {}
+            
+            # Step 2: Add/modify the key-value pair
+            store_data[key] = value
+            
+            # Step 3: Re-encrypt the updated data using AES
+            json_data = json.dumps(store_data, indent=2)
+            encrypt_result = self.encrypt_data_aes(
+                context_file, 
+                base64.b64encode(json_data.encode()).decode(), 
+                store_name
+            )
+            
+            # Clean up temporary file
+            if os.path.exists("temp_decrypted_aes.json"):
+                os.unlink("temp_decrypted_aes.json")
+            
+            if encrypt_result['success']:
+                return {
+                    "success": True,
+                    "key": key,
+                    "value": value,
+                    "store_name": store_name,
+                    "message": f"Key '{key}' stored successfully using AES",
+                    "action": "key_value_stored_aes"
+                }
+            else:
+                return encrypt_result
+                
+        except Exception as e:
+            # Clean up temporary file on error
+            if os.path.exists("temp_decrypted_aes.json"):
+                os.unlink("temp_decrypted_aes.json")
+            return {"success": False, "error": str(e)}
+
+    def retrieve_key_value_aes(self, context_file: str, store_name: str, key: str) -> Dict[str, Any]:
+        """
+        Retrieve a key-value pair from the AES encrypted file store
+        
+        Args:
+            context_file: Key context file (AES key) for decryption
+            store_name: Name of the encrypted file store
+            key: Key to retrieve
+            
+        Returns:
+            Dictionary with retrieval result
+        """
+        try:
+            if not os.path.exists(store_name):
+                return {"success": False, "error": f"AES file store '{store_name}' does not exist"}
+            
+            # Step 1: Read and decrypt the file store
+            with open(store_name, 'rb') as f:
+                encrypted_data = f.read()
+            
+            # Decrypt the data using AES
+            decrypt_result = self.decrypt_data_aes(
+                context_file, 
+                base64.b64encode(encrypted_data).decode(), 
+                "temp_decrypted_aes.json"
+            )
+            
+            if not decrypt_result['success']:
+                return decrypt_result
+            
+            # Step 2: Parse the decrypted JSON and retrieve the key
+            with open("temp_decrypted_aes.json", 'r') as f:
+                store_data = json.load(f)
+            
+            # Clean up temporary file
+            os.unlink("temp_decrypted_aes.json")
+            
+            if key in store_data:
+                return {
+                    "success": True,
+                    "key": key,
+                    "value": store_data[key],
+                    "store_name": store_name,
+                    "action": "key_value_retrieved_aes"
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": f"Key '{key}' not found in AES file store",
+                    "available_keys": list(store_data.keys())
+                }
+                
+        except Exception as e:
+            # Clean up temporary file on error
+            if os.path.exists("temp_decrypted_aes.json"):
+                os.unlink("temp_decrypted_aes.json")
+            return {"success": False, "error": str(e)}
+
+    def list_file_store_keys_aes(self, context_file: str, store_name: str) -> Dict[str, Any]:
+        """
+        List all keys in the AES encrypted file store
+        
+        Args:
+            context_file: Key context file (AES key) for decryption
+            store_name: Name of the encrypted file store
+            
+        Returns:
+            Dictionary with list of keys
+        """
+        try:
+            if not os.path.exists(store_name):
+                return {"success": False, "error": f"AES file store '{store_name}' does not exist"}
+            
+            # Step 1: Read and decrypt the file store
+            with open(store_name, 'rb') as f:
+                encrypted_data = f.read()
+            
+            # Decrypt the data using AES
+            decrypt_result = self.decrypt_data_aes(
+                context_file, 
+                base64.b64encode(encrypted_data).decode(), 
+                "temp_decrypted_aes.json"
+            )
+            
+            if not decrypt_result['success']:
+                return decrypt_result
+            
+            # Step 2: Parse the decrypted JSON and get all keys
+            with open("temp_decrypted_aes.json", 'r') as f:
+                store_data = json.load(f)
+            
+            # Clean up temporary file
+            os.unlink("temp_decrypted_aes.json")
+            
+            return {
+                "success": True,
+                "keys": list(store_data.keys()),
+                "total_keys": len(store_data),
+                "store_name": store_name,
+                "action": "keys_listed_aes"
+            }
+                
+        except Exception as e:
+            # Clean up temporary file on error
+            if os.path.exists("temp_decrypted_aes.json"):
+                os.unlink("temp_decrypted_aes.json")
+            return {"success": False, "error": str(e)}
+
+    def delete_key_value_aes(self, context_file: str, store_name: str, key: str) -> Dict[str, Any]:
+        """
+        Delete a key-value pair from the AES encrypted file store
+        
+        Args:
+            context_file: Key context file (AES key) for encryption/decryption
+            store_name: Name of the encrypted file store
+            key: Key to delete
+            
+        Returns:
+            Dictionary with deletion result
+        """
+        try:
+            if not os.path.exists(store_name):
+                return {"success": False, "error": f"AES file store '{store_name}' does not exist"}
+            
+            # Step 1: Read and decrypt the file store
+            with open(store_name, 'rb') as f:
+                encrypted_data = f.read()
+            
+            # Decrypt the data using AES
+            decrypt_result = self.decrypt_data_aes(
+                context_file, 
+                base64.b64encode(encrypted_data).decode(), 
+                "temp_decrypted_aes.json"
+            )
+            
+            if not decrypt_result['success']:
+                return decrypt_result
+            
+            # Step 2: Parse the decrypted JSON and delete the key
+            with open("temp_decrypted_aes.json", 'r') as f:
+                store_data = json.load(f)
+            
+            if key not in store_data:
+                # Clean up temporary file
+                os.unlink("temp_decrypted_aes.json")
+                return {
+                    "success": False,
+                    "error": f"Key '{key}' not found in AES file store",
+                    "available_keys": list(store_data.keys())
+                }
+            
+            # Store the value before deletion for response
+            deleted_value = store_data[key]
+            del store_data[key]
+            
+            # Step 3: Re-encrypt the updated data using AES
+            json_data = json.dumps(store_data, indent=2)
+            encrypt_result = self.encrypt_data_aes(
+                context_file, 
+                base64.b64encode(json_data.encode()).decode(), 
+                store_name
+            )
+            
+            # Clean up temporary file
+            os.unlink("temp_decrypted_aes.json")
+            
+            if encrypt_result['success']:
+                return {
+                    "success": True,
+                    "key": key,
+                    "deleted_value": deleted_value,
+                    "store_name": store_name,
+                    "message": f"Key '{key}' deleted successfully from AES store",
+                    "action": "key_value_deleted_aes"
+                }
+            else:
+                return encrypt_result
+                
+        except Exception as e:
+            # Clean up temporary file on error
+            if os.path.exists("temp_decrypted_aes.json"):
+                os.unlink("temp_decrypted_aes.json")
             return {"success": False, "error": str(e)}
 
     def full_reset(self) -> Dict[str, Any]:

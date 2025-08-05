@@ -92,6 +92,63 @@ class DecryptDataRequest(BaseModel):
     encrypted_data: str  # base64 encoded encrypted data
     decrypted_file: str = "decrypted.bin"
 
+class CreateFileStoreRequest(BaseModel):
+    context_file: str
+    store_name: str = "file_store.json"
+
+class StoreKeyValueRequest(BaseModel):
+    context_file: str
+    store_name: str
+    key: str
+    value: Any  # Can be any JSON-serializable value
+
+class RetrieveKeyValueRequest(BaseModel):
+    context_file: str
+    store_name: str
+    key: str
+
+class ListFileStoreKeysRequest(BaseModel):
+    context_file: str
+    store_name: str
+
+class DeleteKeyValueRequest(BaseModel):
+    context_file: str
+    store_name: str
+    key: str
+
+class EncryptDataAESRequest(BaseModel):
+    context_file: str
+    data: str  # base64 encoded data
+    encrypted_file: str = "encrypted_aes.bin"
+
+class DecryptDataAESRequest(BaseModel):
+    context_file: str
+    encrypted_data: str  # base64 encoded encrypted data
+    decrypted_file: str = "decrypted_aes.bin"
+
+class CreateFileStoreAESRequest(BaseModel):
+    context_file: str
+    store_name: str = "file_store_aes.json"
+
+class StoreKeyValueAESRequest(BaseModel):
+    context_file: str
+    store_name: str
+    key: str
+    value: Any  # Can be any JSON-serializable value
+
+class RetrieveKeyValueAESRequest(BaseModel):
+    context_file: str
+    store_name: str
+    key: str
+
+class ListFileStoreKeysAESRequest(BaseModel):
+    context_file: str
+    store_name: str
+
+class DeleteKeyValueAESRequest(BaseModel):
+    context_file: str
+    store_name: str
+    key: str
 
 
 # Health check endpoint
@@ -382,6 +439,259 @@ async def complete_workflow():
         
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Encrypted File Store endpoints
+@app.post("/tpm2/file-store/create")
+async def create_file_store(request: CreateFileStoreRequest):
+    """Create a new encrypted file store"""
+    if tpm_api is None:
+        raise HTTPException(status_code=503, detail="TPM2 API not available")
+    
+    try:
+        result = tpm_api.create_encrypted_file_store(
+            context_file=request.context_file,
+            store_name=request.store_name
+        )
+        
+        if result["success"]:
+            return JSONResponse(content=result, status_code=200)
+        else:
+            raise HTTPException(status_code=400, detail=result["error"])
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/tpm2/file-store/store")
+async def store_key_value(request: StoreKeyValueRequest):
+    """Store a key-value pair in the encrypted file store"""
+    if tpm_api is None:
+        raise HTTPException(status_code=503, detail="TPM2 API not available")
+    
+    try:
+        result = tpm_api.store_key_value(
+            context_file=request.context_file,
+            store_name=request.store_name,
+            key=request.key,
+            value=request.value
+        )
+        
+        if result["success"]:
+            return JSONResponse(content=result, status_code=200)
+        else:
+            raise HTTPException(status_code=400, detail=result["error"])
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/tpm2/file-store/retrieve")
+async def retrieve_key_value(request: RetrieveKeyValueRequest):
+    """Retrieve a key-value pair from the encrypted file store"""
+    if tpm_api is None:
+        raise HTTPException(status_code=503, detail="TPM2 API not available")
+    
+    try:
+        result = tpm_api.retrieve_key_value(
+            context_file=request.context_file,
+            store_name=request.store_name,
+            key=request.key
+        )
+        
+        if result["success"]:
+            return JSONResponse(content=result, status_code=200)
+        else:
+            raise HTTPException(status_code=400, detail=result["error"])
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/tpm2/file-store/list-keys")
+async def list_file_store_keys(request: ListFileStoreKeysRequest):
+    """List all keys in the encrypted file store"""
+    if tpm_api is None:
+        raise HTTPException(status_code=503, detail="TPM2 API not available")
+    
+    try:
+        result = tpm_api.list_file_store_keys(
+            context_file=request.context_file,
+            store_name=request.store_name
+        )
+        
+        if result["success"]:
+            return JSONResponse(content=result, status_code=200)
+        else:
+            raise HTTPException(status_code=400, detail=result["error"])
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/tpm2/file-store/delete")
+async def delete_key_value(request: DeleteKeyValueRequest):
+    """Delete a key-value pair from the encrypted file store"""
+    if tpm_api is None:
+        raise HTTPException(status_code=503, detail="TPM2 API not available")
+    
+    try:
+        result = tpm_api.delete_key_value(
+            context_file=request.context_file,
+            store_name=request.store_name,
+            key=request.key
+        )
+        
+        if result["success"]:
+            return JSONResponse(content=result, status_code=200)
+        else:
+            raise HTTPException(status_code=400, detail=result["error"])
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# AES Encryption/Decryption endpoints
+@app.post("/tpm2/encrypt-aes")
+async def encrypt_data_aes(request: EncryptDataAESRequest):
+    """Encrypt data using a loaded AES key"""
+    if tpm_api is None:
+        raise HTTPException(status_code=503, detail="TPM2 API not available")
+    
+    try:
+        result = tpm_api.encrypt_data_aes(
+            context_file=request.context_file,
+            data=request.data,
+            encrypted_file=request.encrypted_file
+        )
+        
+        if result["success"]:
+            return JSONResponse(content=result, status_code=200)
+        else:
+            raise HTTPException(status_code=400, detail=result["error"])
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/tpm2/decrypt-aes")
+async def decrypt_data_aes(request: DecryptDataAESRequest):
+    """Decrypt data using a loaded AES key"""
+    if tpm_api is None:
+        raise HTTPException(status_code=503, detail="TPM2 API not available")
+    
+    try:
+        result = tpm_api.decrypt_data_aes(
+            context_file=request.context_file,
+            encrypted_data=request.encrypted_data,
+            decrypted_file=request.decrypted_file
+        )
+        
+        if result["success"]:
+            return JSONResponse(content=result, status_code=200)
+        else:
+            raise HTTPException(status_code=400, detail=result["error"])
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# AES Encrypted File Store endpoints
+@app.post("/tpm2/file-store-aes/create")
+async def create_file_store_aes(request: CreateFileStoreAESRequest):
+    """Create a new AES encrypted file store"""
+    if tpm_api is None:
+        raise HTTPException(status_code=503, detail="TPM2 API not available")
+    
+    try:
+        result = tpm_api.create_encrypted_file_store_aes(
+            context_file=request.context_file,
+            store_name=request.store_name
+        )
+        
+        if result["success"]:
+            return JSONResponse(content=result, status_code=200)
+        else:
+            raise HTTPException(status_code=400, detail=result["error"])
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/tpm2/file-store-aes/store")
+async def store_key_value_aes(request: StoreKeyValueAESRequest):
+    """Store a key-value pair in the AES encrypted file store"""
+    if tpm_api is None:
+        raise HTTPException(status_code=503, detail="TPM2 API not available")
+    
+    try:
+        result = tpm_api.store_key_value_aes(
+            context_file=request.context_file,
+            store_name=request.store_name,
+            key=request.key,
+            value=request.value
+        )
+        
+        if result["success"]:
+            return JSONResponse(content=result, status_code=200)
+        else:
+            raise HTTPException(status_code=400, detail=result["error"])
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/tpm2/file-store-aes/retrieve")
+async def retrieve_key_value_aes(request: RetrieveKeyValueAESRequest):
+    """Retrieve a key-value pair from the AES encrypted file store"""
+    if tpm_api is None:
+        raise HTTPException(status_code=503, detail="TPM2 API not available")
+    
+    try:
+        result = tpm_api.retrieve_key_value_aes(
+            context_file=request.context_file,
+            store_name=request.store_name,
+            key=request.key
+        )
+        
+        if result["success"]:
+            return JSONResponse(content=result, status_code=200)
+        else:
+            raise HTTPException(status_code=400, detail=result["error"])
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/tpm2/file-store-aes/list-keys")
+async def list_file_store_keys_aes(request: ListFileStoreKeysAESRequest):
+    """List all keys in the AES encrypted file store"""
+    if tpm_api is None:
+        raise HTTPException(status_code=503, detail="TPM2 API not available")
+    
+    try:
+        result = tpm_api.list_file_store_keys_aes(
+            context_file=request.context_file,
+            store_name=request.store_name
+        )
+        
+        if result["success"]:
+            return JSONResponse(content=result, status_code=200)
+        else:
+            raise HTTPException(status_code=400, detail=result["error"])
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/tpm2/file-store-aes/delete")
+async def delete_key_value_aes(request: DeleteKeyValueAESRequest):
+    """Delete a key-value pair from the AES encrypted file store"""
+    if tpm_api is None:
+        raise HTTPException(status_code=503, detail="TPM2 API not available")
+    
+    try:
+        result = tpm_api.delete_key_value_aes(
+            context_file=request.context_file,
+            store_name=request.store_name,
+            key=request.key
+        )
+        
+        if result["success"]:
+            return JSONResponse(content=result, status_code=200)
+        else:
+            raise HTTPException(status_code=400, detail=result["error"])
+            
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

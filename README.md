@@ -40,6 +40,7 @@ The project includes a complete Docker setup with:
 ## Key Features
 - **REST API**: Access TPM2 functionality via a FastAPI-based REST API for easy integration with other services and automation.
 - **CLI Interface**: Use the Python command-line interface (CLI) for direct TPM2 operations from the terminal or scripts.
+- **Encrypted File Store**: Secure key-value storage with TPM2 encryption, allowing you to store and retrieve sensitive data in encrypted JSON files.
 
 
 
@@ -70,7 +71,7 @@ docker rm -f tpm2-test tpm2-cli 2>/dev/null; docker rmi -f tpm2-api 2>/dev/null
 
 ### TPM2 Operations
 - `POST /tpm2/create-primary` - Create a primary key
-- `POST /tpm2/create-key` - Create a key under a parent
+- `POST /tpm2/create-key` - Create a key under a parent (supports RSA, ECC, AES128, AES256)
 - `POST /tpm2/load-key` - Load a key into TPM context
 - `POST /tpm2/make-persistent` - Make a key persistent
 - `POST /tpm2/flush-context` - Flush TPM contexts
@@ -79,7 +80,23 @@ docker rm -f tpm2-test tpm2-cli 2>/dev/null; docker rmi -f tpm2-api 2>/dev/null
 - `POST /tpm2/verify` - Verify a signature
 - `POST /tpm2/encrypt` - Encrypt data using a loaded RSA key
 - `POST /tpm2/decrypt` - Decrypt data using a loaded RSA key
+- `POST /tpm2/encrypt-aes` - Encrypt data using a loaded AES key
+- `POST /tpm2/decrypt-aes` - Decrypt data using a loaded AES key
 - `POST /tpm2/full-reset` - Complete TPM reset (clears all contexts, persistent objects, and authorizations)
+
+### Encrypted File Store Endpoints
+- `POST /tpm2/file-store/create` - Create a new encrypted file store (RSA)
+- `POST /tpm2/file-store/store` - Store a key-value pair in the encrypted file store (RSA)
+- `POST /tpm2/file-store/retrieve` - Retrieve a key-value pair from the encrypted file store (RSA)
+- `POST /tpm2/file-store/list-keys` - List all keys in the encrypted file store (RSA)
+- `POST /tpm2/file-store/delete` - Delete a key-value pair from the encrypted file store (RSA)
+
+### AES Encrypted File Store Endpoints
+- `POST /tpm2/file-store-aes/create` - Create a new encrypted file store (AES)
+- `POST /tpm2/file-store-aes/store` - Store a key-value pair in the encrypted file store (AES)
+- `POST /tpm2/file-store-aes/retrieve` - Retrieve a key-value pair from the encrypted file store (AES)
+- `POST /tpm2/file-store-aes/list-keys` - List all keys in the encrypted file store (AES)
+- `POST /tpm2/file-store-aes/delete` - Delete a key-value pair from the encrypted file store (AES)
 
 ### Convenience Endpoints
 - `POST /tpm2/workflow/complete` - Execute complete workflow
@@ -101,6 +118,19 @@ curl -X POST -H "Content-Type: application/json" \
   http://localhost:8000/tpm2/create-key
 ```
 
+### Create AES Key
+```bash
+# Create AES-128 key
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"parent_context": "primary.ctx", "key_type": "aes128", "public_file": "aes128_key.ctx"}' \
+  http://localhost:8000/tpm2/create-key
+
+# Create AES-256 key
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"parent_context": "primary.ctx", "key_type": "aes256", "public_file": "aes256_key.ctx"}' \
+  http://localhost:8000/tpm2/create-key
+```
+
 ### Load Key
 ```bash
 curl -X POST -H "Content-Type: application/json" \
@@ -118,7 +148,7 @@ curl -X POST -H "Content-Type: application/json" \
 ### Flush Contexts (when running out of memory)
 ```bash
 curl -X POST -H "Content-Type: application/json" \
-  -d '{"context_type": "all"}' \
+  -d '{"context_type": "transient"}' \
   http://localhost:8000/tpm2/flush-context
 ```
 
@@ -161,6 +191,113 @@ curl -X POST -H "Content-Type: application/json" \
 curl -X POST -H "Content-Type: application/json" \
   -d '{"context_file": "loaded_key.ctx", "encrypted_data": "base64_encoded_encrypted_data", "decrypted_file": "decrypted.bin"}' \
   http://localhost:8000/tpm2/decrypt
+```
+
+### Encrypt/Decrypt Data with AES
+```bash
+# Encrypt data using a loaded AES key
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"context_file": "aes256_key.ctx", "data": "base64_encoded_data", "encrypted_file": "encrypted_aes.bin"}' \
+  http://localhost:8000/tpm2/encrypt-aes
+
+# Decrypt data using a loaded AES key
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"context_file": "aes256_key.ctx", "encrypted_data": "base64_encoded_encrypted_data", "decrypted_file": "decrypted_aes.bin"}' \
+  http://localhost:8000/tpm2/decrypt-aes
+```
+
+### Encrypted File Store Operations
+
+#### Create Encrypted File Store
+```bash
+# Create a new encrypted file store
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"context_file": "encrypt_key.ctx", "store_name": "my_secure_store.json"}' \
+  http://localhost:8000/tpm2/file-store/create
+```
+
+#### Store Key-Value Pair
+```bash
+# Store a simple string value
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"context_file": "encrypt_key.ctx", "store_name": "my_secure_store.json", "key": "username", "value": "john_doe"}' \
+  http://localhost:8000/tpm2/file-store/store
+
+# Store a complex object
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"context_file": "encrypt_key.ctx", "store_name": "my_secure_store.json", "key": "user_profile", "value": {"name": "John Doe", "email": "john@example.com"}}' \
+  http://localhost:8000/tpm2/file-store/store
+```
+
+#### Retrieve Key-Value Pair
+```bash
+# Retrieve a stored value
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"context_file": "encrypt_key.ctx", "store_name": "my_secure_store.json", "key": "username"}' \
+  http://localhost:8000/tpm2/file-store/retrieve
+```
+
+#### List All Keys
+```bash
+# List all keys in the encrypted file store
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"context_file": "encrypt_key.ctx", "store_name": "my_secure_store.json"}' \
+  http://localhost:8000/tpm2/file-store/list-keys
+```
+
+#### Delete Key-Value Pair
+```bash
+# Delete a key-value pair
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"context_file": "encrypt_key.ctx", "store_name": "my_secure_store.json", "key": "username"}' \
+  http://localhost:8000/tpm2/file-store/delete
+```
+
+### AES Encrypted File Store Operations
+
+#### Create AES Encrypted File Store
+```bash
+# Create a new AES encrypted file store
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"context_file": "aes256_key.ctx", "store_name": "my_aes_secure_store.json"}' \
+  http://localhost:8000/tpm2/file-store-aes/create
+```
+
+#### Store Key-Value Pair (AES)
+```bash
+# Store a simple string value using AES
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"context_file": "aes256_key.ctx", "store_name": "my_aes_secure_store.json", "key": "username", "value": "john_doe"}' \
+  http://localhost:8000/tpm2/file-store-aes/store
+
+# Store a complex object using AES
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"context_file": "aes256_key.ctx", "store_name": "my_aes_secure_store.json", "key": "user_profile", "value": {"name": "John Doe", "email": "john@example.com"}}' \
+  http://localhost:8000/tpm2/file-store-aes/store
+```
+
+#### Retrieve Key-Value Pair (AES)
+```bash
+# Retrieve a stored value using AES
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"context_file": "aes256_key.ctx", "store_name": "my_aes_secure_store.json", "key": "username"}' \
+  http://localhost:8000/tpm2/file-store-aes/retrieve
+```
+
+#### List All Keys (AES)
+```bash
+# List all keys in the AES encrypted file store
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"context_file": "aes256_key.ctx", "store_name": "my_aes_secure_store.json"}' \
+  http://localhost:8000/tpm2/file-store-aes/list-keys
+```
+
+#### Delete Key-Value Pair (AES)
+```bash
+# Delete a key-value pair using AES
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"context_file": "aes256_key.ctx", "store_name": "my_aes_secure_store.json", "key": "username"}' \
+  http://localhost:8000/tpm2/file-store-aes/delete
 ```
 
 ### Full TPM Reset
@@ -344,6 +481,109 @@ if encrypt_result.get("success"):
         print("❌ Decryption failed!")
 else:
     print("❌ Encryption failed!")
+```
+
+### Complete Encrypted File Store Workflow Example
+```python
+import base64
+import requests
+import json
+
+# API base URL
+base_url = "http://localhost:8000"
+
+# 1. Create primary key
+print("Creating primary key...")
+response = requests.post(f"{base_url}/tpm2/create-primary", 
+                        json={"hierarchy": "o", "context_file": "primary.ctx"})
+print(json.dumps(response.json(), indent=2))
+
+# 2. Create encryption key
+print("\nCreating encryption key...")
+response = requests.post(f"{base_url}/tpm2/create-key",
+                        json={"parent_context": "primary.ctx", 
+                              "key_type": "rsa", 
+                              "public_file": "encrypt_key.pub", 
+                              "private_file": "encrypt_key.priv"})
+print(json.dumps(response.json(), indent=2))
+
+# 3. Load encryption key
+print("\nLoading encryption key...")
+response = requests.post(f"{base_url}/tpm2/load-key",
+                        json={"parent_context": "primary.ctx",
+                              "public_file": "encrypt_key.pub",
+                              "private_file": "encrypt_key.priv",
+                              "context_file": "encrypt_key.ctx"})
+print(json.dumps(response.json(), indent=2))
+
+# 4. Create encrypted file store
+print("\nCreating encrypted file store...")
+response = requests.post(f"{base_url}/tpm2/file-store/create",
+                        json={"context_file": "encrypt_key.ctx",
+                              "store_name": "my_secure_store.json"})
+print(json.dumps(response.json(), indent=2))
+
+# 5. Store various types of data
+print("\nStoring data...")
+
+# Store a string
+response = requests.post(f"{base_url}/tpm2/file-store/store",
+                        json={"context_file": "encrypt_key.ctx",
+                              "store_name": "my_secure_store.json",
+                              "key": "username",
+                              "value": "john_doe"})
+print("String stored:", response.json()["success"])
+
+# Store a complex object
+user_data = {
+    "name": "John Doe",
+    "email": "john@example.com",
+    "preferences": {"theme": "dark", "notifications": True}
+}
+response = requests.post(f"{base_url}/tpm2/file-store/store",
+                        json={"context_file": "encrypt_key.ctx",
+                              "store_name": "my_secure_store.json",
+                              "key": "user_profile",
+                              "value": user_data})
+print("Object stored:", response.json()["success"])
+
+# 6. List all keys
+print("\nListing all keys...")
+response = requests.post(f"{base_url}/tpm2/file-store/list-keys",
+                        json={"context_file": "encrypt_key.ctx",
+                              "store_name": "my_secure_store.json"})
+result = response.json()
+print(f"Total keys: {result['total_keys']}")
+print(f"Keys: {result['keys']}")
+
+# 7. Retrieve stored data
+print("\nRetrieving data...")
+response = requests.post(f"{base_url}/tpm2/file-store/retrieve",
+                        json={"context_file": "encrypt_key.ctx",
+                              "store_name": "my_secure_store.json",
+                              "key": "user_profile"})
+result = response.json()
+if result["success"]:
+    print(f"Retrieved user profile: {result['value']}")
+
+# 8. Update existing data
+print("\nUpdating data...")
+response = requests.post(f"{base_url}/tpm2/file-store/store",
+                        json={"context_file": "encrypt_key.ctx",
+                              "store_name": "my_secure_store.json",
+                              "key": "username",
+                              "value": "john_doe_updated"})
+print("Data updated:", response.json()["success"])
+
+# 9. Delete a key
+print("\nDeleting key...")
+response = requests.post(f"{base_url}/tpm2/file-store/delete",
+                        json={"context_file": "encrypt_key.ctx",
+                              "store_name": "my_secure_store.json",
+                              "key": "username"})
+print("Key deleted:", response.json()["success"])
+
+print("\n✅ Encrypted file store workflow completed!")
 ```
 <!-- 
 ## Key Advantages
