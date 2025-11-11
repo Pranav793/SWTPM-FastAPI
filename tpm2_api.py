@@ -165,6 +165,18 @@ class TPM2API:
             Dictionary with key information
         """
         try:
+            # For AES keys, prepare filenames before command creation
+            aes_pub_file = None
+            aes_priv_file = None
+            if key_type.lower() in ["aes128", "aes256"]:
+                # Generate appropriate filenames from the context file name
+                if public_file.endswith('.ctx'):
+                    aes_pub_file = public_file.replace('.ctx', '.pub')
+                    aes_priv_file = public_file.replace('.ctx', '.priv')
+                else:
+                    aes_pub_file = public_file + '.pub'
+                    aes_priv_file = (private_file if private_file != "key.priv" else public_file + '.priv')
+            
             if key_type.lower() == "rsa":
                 key_alg = "rsa2048"
                 cmd = [
@@ -184,14 +196,17 @@ class TPM2API:
                     '-r', private_file
                 ]
             elif key_type.lower() in ["aes128", "aes256"]:
-                # For AES keys, we use tpm2_createprimary to create a symmetric key
-                # AES keys are stored directly as context files
+                # For AES keys, we use tpm2_create to create a symmetric key with proper attributes
+                # This ensures the key can be used with tpm2_encryptdecrypt
                 key_size = "128" if key_type.lower() == "aes128" else "256"
+                # Create the AES key as a child key (not primary) with proper attributes
+                # We need to create public/private key files, then load it
                 cmd = [
-                    'tpm2_createprimary',
+                    'tpm2_create',
                     '-C', parent_context,
                     '-G', f'aes{key_size}',
-                    '-c', public_file  # For AES, we save the context directly
+                    '-u', aes_pub_file,  # Public portion
+                    '-r', aes_priv_file  # Private portion
                 ]
             else:
                 return {"success": False, "error": f"Unsupported key type: {key_type}"}
@@ -200,13 +215,35 @@ class TPM2API:
             
             if result['success']:
                 if key_type.lower().startswith("aes"):
-                    return {
-                        "success": True,
-                        "context_file": public_file,  # For AES, this is the context file
-                        "key_type": key_type,
-                        "parent_context": parent_context,
-                        "action": "aes_key_created"
-                    }
+                    # For AES keys, we need to load them after creation to get a context file
+                    # Ensure context file ends with .ctx
+                    context_file = public_file if public_file.endswith('.ctx') else public_file + '.ctx'
+                    
+                    # Load the AES key to create a context file
+                    load_result = self.load_key(parent_context, aes_pub_file, aes_priv_file, context_file)
+                    
+                    if load_result['success']:
+                        return {
+                            "success": True,
+                            "context_file": context_file,  # Context file for AES key
+                            "public_file": aes_pub_file,
+                            "private_file": aes_priv_file,
+                            "key_type": key_type,
+                            "parent_context": parent_context,
+                            "action": "aes_key_created"
+                        }
+                    else:
+                        # Return the creation success but note load failed
+                        return {
+                            "success": True,
+                            "public_file": aes_pub_file,
+                            "private_file": aes_priv_file,
+                            "context_file": None,
+                            "warning": f"AES key created but failed to load: {load_result.get('error', 'Unknown error')}",
+                            "key_type": key_type,
+                            "parent_context": parent_context,
+                            "action": "aes_key_created_not_loaded"
+                        }
                 else:
                     return {
                         "success": True,
@@ -588,8 +625,16 @@ class TPM2API:
             Dictionary with encryption result
         """
         try:
-            # Decode base64 data
-            decoded_data = base64.b64decode(data)
+            # Decode base64 data with proper padding handling
+            try:
+                decoded_data = base64.b64decode(data, validate=True)
+            except Exception:
+                # If decoding fails due to padding, add padding and retry
+                padding_needed = 4 - (len(data) % 4)
+                if padding_needed != 4:
+                    decoded_data = base64.b64decode(data + '=' * padding_needed, validate=True)
+                else:
+                    raise ValueError(f"Invalid base64-encoded string: number of data characters ({len(data)}) cannot be processed")
             
             # Create temporary file for data
             with tempfile.NamedTemporaryFile(delete=False, mode='wb') as temp_file:
@@ -597,11 +642,16 @@ class TPM2API:
                 temp_data_file = temp_file.name
             
             try:
+                # Use --pad for PKCS7 padding to ensure proper block alignment
+                # Encryption is the default, so no flag needed for that
+                # Specify CFB mode explicitly (default for AES in TPM2)
                 cmd = [
                     'tpm2_encryptdecrypt',
                     '-c', context_file,
-                    '-d', temp_data_file,
-                    '-o', encrypted_file
+                    '--mode', 'cfb',  # Explicitly specify CFB mode for AES
+                    '--pad',  # Enable PKCS7 padding for AES block ciphers
+                    '-o', encrypted_file,
+                    temp_data_file,
                 ]
                 
                 result = self._run_command(cmd)
@@ -640,8 +690,17 @@ class TPM2API:
             Dictionary with decryption result
         """
         try:
-            # Decode base64 encrypted data
-            decoded_encrypted = base64.b64decode(encrypted_data)
+            # Decode base64 encrypted data with proper padding handling
+            # Base64 strings must be multiples of 4 characters
+            try:
+                decoded_encrypted = base64.b64decode(encrypted_data, validate=True)
+            except Exception:
+                # If decoding fails due to padding, add padding and retry
+                padding_needed = 4 - (len(encrypted_data) % 4)
+                if padding_needed != 4:
+                    decoded_encrypted = base64.b64decode(encrypted_data + '=' * padding_needed, validate=True)
+                else:
+                    raise ValueError(f"Invalid base64-encoded string: number of data characters ({len(encrypted_data)}) cannot be processed")
             
             # Create temporary file for encrypted data
             with tempfile.NamedTemporaryFile(delete=False, mode='wb') as temp_file:
@@ -649,12 +708,16 @@ class TPM2API:
                 temp_encrypted_file = temp_file.name
             
             try:
+                # Use -d or --decrypt for decryption
+                # Input file should be the last argument
+                # Specify CFB mode explicitly to match encryption
                 cmd = [
                     'tpm2_encryptdecrypt',
                     '-c', context_file,
-                    '-d', temp_encrypted_file,
+                    '-d',  # Decrypt mode
+                    '--mode', 'cfb',  # Explicitly specify CFB mode for AES
                     '-o', decrypted_file,
-                    '--decrypt'
+                    temp_encrypted_file  # Input file as last argument
                 ]
                 
                 result = self._run_command(cmd)

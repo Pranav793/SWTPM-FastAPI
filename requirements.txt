@@ -6,4 +6,5 @@ uvicorn>=0.15.0
 pydantic>=1.8.0
 
 # Utilities
-python-multipart>=0.0.5 
+python-multipart>=0.0.5
+requests>=2.25.0 
