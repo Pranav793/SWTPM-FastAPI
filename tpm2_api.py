@@ -223,6 +223,26 @@ class TPM2API:
                     load_result = self.load_key(parent_context, aes_pub_file, aes_priv_file, context_file)
                     
                     if load_result['success']:
+                        # Collect recovery material so clients can securely back up the AES key blobs
+                        recovery_material = {}
+                        try:
+                            with open(aes_pub_file, 'rb') as f:
+                                recovery_material['public_blob_b64'] = base64.b64encode(f.read()).decode()
+                        except Exception as e:
+                            recovery_material['public_blob_error'] = str(e)
+                        
+                        try:
+                            with open(aes_priv_file, 'rb') as f:
+                                recovery_material['private_blob_b64'] = base64.b64encode(f.read()).decode()
+                        except Exception as e:
+                            recovery_material['private_blob_error'] = str(e)
+                        
+                        if recovery_material:
+                            recovery_material.update({
+                                "public_file": aes_pub_file,
+                                "private_file": aes_priv_file
+                            })
+                        
                         return {
                             "success": True,
                             "context_file": context_file,  # Context file for AES key
@@ -230,7 +250,8 @@ class TPM2API:
                             "private_file": aes_priv_file,
                             "key_type": key_type,
                             "parent_context": parent_context,
-                            "action": "aes_key_created"
+                            "action": "aes_key_created",
+                            "recovery_material": recovery_material
                         }
                     else:
                         # Return the creation success but note load failed

@@ -7,10 +7,14 @@ with AnyLog nodes for storing and retrieving keys (pubkeys/privkeys).
 Uses HTTP requests to communicate with the TPM2 REST API.
 """
 
+import base64
+import os
+import tempfile
+from pathlib import Path
 import requests
 import subprocess
 import time
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 # Default API base URL
 DEFAULT_API_URL = "http://localhost:8000"
@@ -214,6 +218,388 @@ def _flush_context(base_url: str = DEFAULT_API_URL) -> None:
         print(f"Warning: Failed to flush TPM context: {e}")
 
 
+def _emit_aes_recovery_material(
+    recovery_material: Optional[Dict[str, Any]],
+    encrypt_key_ctx: str,
+    store_name: str
+) -> None:
+    """
+    Print recovery material for a newly created AES key so operators can back it up.
+    Only emits output when private blob data is present.
+    """
+    if not recovery_material:
+        return
+    
+    validation_errors = _validate_recovery_material(recovery_material)
+    if validation_errors:
+        print("Warning: Recovery material validation failed:")
+        for error in validation_errors:
+            print(f" - {error}")
+        # Continue printing any captured blobs even if validation failed,
+        # since operators might still salvage the data.
+    
+    if "private_blob_error" in recovery_material:
+        print(f"Warning: Unable to capture AES private blob: {recovery_material['private_blob_error']}")
+    if "public_blob_error" in recovery_material:
+        print(f"Warning: Unable to capture AES public blob: {recovery_material['public_blob_error']}")
+    
+    if "private_blob_b64" not in recovery_material:
+        return
+    
+    private_blob = recovery_material.get("private_blob_b64")
+    public_blob = recovery_material.get("public_blob_b64")
+    
+    print("\n=== AnyLog TPM AES Recovery Material ===")
+    print("A new AES key was created for the encrypted file store.")
+    print(f"Context file: {encrypt_key_ctx}")
+    print(f"File store: {store_name}")
+    print("\nPrivate blob (base64):")
+    print(private_blob)
+    
+    if public_blob:
+        print("\nPublic blob (base64):")
+        print(public_blob)
+    
+    print("\nStore these blobs securely off-container. They are required to restore the AES key if the TPM state is lost.")
+    print("=== End AES Recovery Material ===\n")
+
+
+def _validate_recovery_material(recovery_material: Dict[str, Any]) -> List[str]:
+    """
+    Validate that recovery material blobs are well-formed base64 strings.
+    Returns a list of validation error messages.
+    """
+    errors: List[str] = []
+    for label in ("private", "public"):
+        blob = recovery_material.get(f"{label}_blob_b64")
+        if blob:
+            try:
+                decoded = base64.b64decode(blob, validate=True)
+                if not decoded:
+                    errors.append(f"{label} blob decoded to empty bytes")
+            except Exception as exc:
+                errors.append(f"{label} blob is not valid base64: {exc}")
+    return errors
+
+
+def _decode_base64_blob(blob_b64: str, label: str) -> bytes:
+    """
+    Decode a base64-encoded blob, providing a helpful error message.
+    """
+    try:
+        data = base64.b64decode(blob_b64, validate=True)
+        if not data:
+            raise ValueError("decoded data is empty")
+        return data
+    except Exception as exc:
+        raise ValueError(f"{label} blob is not valid base64: {exc}") from exc
+
+
+def _write_blob_to_file(blob_b64: str, destination: str, label: str) -> str:
+    """
+    Decode a base64 blob and write it to the supplied destination path.
+    Returns the absolute path to the written file.
+    """
+    data = _decode_base64_blob(blob_b64, label)
+    path = Path(destination).expanduser().resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(data)
+    return str(path)
+
+
+def save_recovery_material_to_directory(
+    recovery_material: Dict[str, Any],
+    output_dir: str,
+    prefix: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Persist AES recovery blobs to disk so they can be re-imported later.
+    
+    Args:
+        recovery_material: Dict containing 'private_blob_b64' (required) and 'public_blob_b64' (optional)
+        output_dir: Directory where the files should be written
+        prefix: Optional prefix for the generated filenames (defaults to 'anylog_encrypt_key_aes')
+        
+    Returns:
+        Dict with success flag and file paths
+    """
+    if not recovery_material:
+        return {
+            "success": False,
+            "error": "No recovery material provided"
+        }
+    
+    if "private_blob_b64" not in recovery_material:
+        return {
+            "success": False,
+            "error": "Recovery material missing required 'private_blob_b64' field"
+        }
+    
+    prefix = prefix or "anylog_encrypt_key_aes"
+    output_path = Path(output_dir).expanduser().resolve()
+    output_path.mkdir(parents=True, exist_ok=True)
+    
+    private_path = output_path / f"{prefix}.priv"
+    public_path = None
+    
+    try:
+        written_private = _write_blob_to_file(recovery_material["private_blob_b64"], str(private_path), "private")
+        if "public_blob_b64" in recovery_material and recovery_material["public_blob_b64"]:
+            public_path = output_path / f"{prefix}.pub"
+            written_public = _write_blob_to_file(recovery_material["public_blob_b64"], str(public_path), "public")
+        else:
+            written_public = None
+        
+        return {
+            "success": True,
+            "private_file": written_private,
+            "public_file": written_public,
+            "output_dir": str(output_path)
+        }
+    except Exception as exc:
+        return {
+            "success": False,
+            "error": f"Failed to write recovery files: {exc}"
+        }
+
+
+def restore_aes_key_from_recovery(
+    parent_ctx: str = DEFAULT_PRIMARY_CTX,
+    encrypt_key_ctx: str = DEFAULT_ENCRYPT_KEY_CTX,
+    private_blob_b64: Optional[str] = None,
+    public_blob_b64: Optional[str] = None,
+    private_blob_path: Optional[str] = None,
+    public_blob_path: Optional[str] = None,
+    base_url: str = DEFAULT_API_URL,
+    ensure_primary: bool = True,
+    cleanup_temporary: bool = True
+) -> Dict[str, Any]:
+    """
+    Restore the AES encryption key inside the TPM using previously exported blobs.
+    
+    The caller can supply either base64-encoded blobs, file paths, or a mix of both.
+    
+    Args:
+        parent_ctx: Primary context file that owns the AES key
+        encrypt_key_ctx: Target context file to recreate for the AES key
+        private_blob_b64/public_blob_b64: Base64 encoded TPM blobs
+        private_blob_path/public_blob_path: Paths to TPM blob files on disk
+        base_url: REST API base URL
+        ensure_primary: Whether to attempt re-creating the parent primary key if missing
+        cleanup_temporary: Remove temporary files created for base64 blobs after loading
+        
+    Returns:
+        Dict with success flag and any relevant messages/errors
+    """
+    tmp_files: List[str] = []
+    
+    def resolve_blob(label: str, blob_b64: Optional[str], blob_path: Optional[str], suffix: str) -> Optional[str]:
+        if blob_path:
+            path = Path(blob_path).expanduser().resolve()
+            if not path.exists():
+                raise FileNotFoundError(f"{label.capitalize()} blob file not found: {path}")
+            return str(path)
+        if blob_b64:
+            tmp = tempfile.NamedTemporaryFile(prefix=f"anylog_{label}_", suffix=suffix, delete=False)
+            tmp_path = tmp.name
+            tmp.close()
+            _write_blob_to_file(blob_b64, tmp_path, label)
+            tmp_files.append(tmp_path)
+            return tmp_path
+        return None
+    
+    try:
+        private_file = resolve_blob("private", private_blob_b64, private_blob_path, ".priv")
+        public_file = resolve_blob("public", public_blob_b64, public_blob_path, ".pub")
+        
+        if not private_file:
+            return {
+                "success": False,
+                "error": "A private blob is required to restore the AES key"
+            }
+        if not public_file:
+            return {
+                "success": False,
+                "error": "A public blob is required to restore the AES key"
+            }
+        
+        # Optionally recreate the primary parent (best effort)
+        if ensure_primary:
+            primary_result = _make_request(
+                "POST",
+                "/tpm2/create-primary",
+                json_data={"hierarchy": "o", "context_file": parent_ctx},
+                base_url=base_url
+            )
+            if not primary_result.get("success"):
+                # If the error indicates the primary already exists, ignore it; otherwise return failure.
+                error_msg = primary_result.get("error", "").lower()
+                if "already exists" not in error_msg and "file exists" not in error_msg:
+                    return {
+                        "success": False,
+                        "error": f"Failed to ensure primary key '{parent_ctx}': {primary_result.get('error', 'Unknown error')}"
+                    }
+        
+        _flush_context(base_url=base_url)
+        
+        load_result = _make_request(
+            "POST",
+            "/tpm2/load-key",
+            json_data={
+                "parent_context": parent_ctx,
+                "public_file": public_file,
+                "private_file": private_file,
+                "context_file": encrypt_key_ctx
+            },
+            base_url=base_url
+        )
+        
+        _flush_context(base_url=base_url)
+        
+        if load_result.get("success"):
+            return {
+                "success": True,
+                "message": f"AES key restored into context '{encrypt_key_ctx}'",
+                "context_file": encrypt_key_ctx,
+                "public_file": public_file,
+                "private_file": private_file
+            }
+        else:
+            return {
+                "success": False,
+                "error": load_result.get("error", "Unknown error restoring AES key"),
+                "details": load_result
+            }
+    except Exception as exc:
+        return {
+            "success": False,
+            "error": f"Failed to restore AES key: {exc}"
+        }
+    finally:
+        if cleanup_temporary:
+            for path in tmp_files:
+                try:
+                    os.unlink(path)
+                except Exception:
+                    pass
+
+
+def set_custom_aes_key_from_files(
+    private_blob_path: str,
+    public_blob_path: str,
+    parent_ctx: str = DEFAULT_PRIMARY_CTX,
+    encrypt_key_ctx: str = DEFAULT_ENCRYPT_KEY_CTX,
+    store_name: str = DEFAULT_STORE_NAME,
+    base_url: str = DEFAULT_API_URL,
+    recreate_store: bool = False
+) -> Dict[str, Any]:
+    """
+    Load a custom AES key into the TPM using existing TPM blob files on disk.
+    
+    Args:
+        private_blob_path/public_blob_path: Paths to TPM private/public blob files
+        parent_ctx: Primary parent context file
+        encrypt_key_ctx: Target context file for the AES key
+        store_name: AES file store name (used if recreate_store=True)
+        base_url: REST API base URL
+        recreate_store: If True, reinitialize the encrypted file store after loading the key
+        
+    Returns:
+        Dict with success flag and any messages/errors
+    """
+    restore_result = restore_aes_key_from_recovery(
+        parent_ctx=parent_ctx,
+        encrypt_key_ctx=encrypt_key_ctx,
+        private_blob_path=private_blob_path,
+        public_blob_path=public_blob_path,
+        base_url=base_url
+    )
+    
+    if not restore_result.get("success"):
+        return restore_result
+    
+    if recreate_store:
+        _flush_context(base_url=base_url)
+        create_result = _make_request(
+            "POST",
+            "/tpm2/file-store-aes/create",
+            json_data={
+                "context_file": encrypt_key_ctx,
+                "store_name": store_name
+            },
+            base_url=base_url
+        )
+        _flush_context(base_url=base_url)
+        
+        if not create_result.get("success"):
+            return {
+                "success": False,
+                "error": f"AES key loaded but failed to create encrypted store '{store_name}': {create_result.get('error', 'Unknown error')}"
+            }
+    
+    return {
+        "success": True,
+        "message": "Custom AES key loaded successfully",
+        "context_file": encrypt_key_ctx,
+        "store_name": store_name,
+        "recreated_store": recreate_store
+    }
+
+
+def set_custom_aes_key_from_base64(
+    private_blob_b64: str,
+    public_blob_b64: str,
+    parent_ctx: str = DEFAULT_PRIMARY_CTX,
+    encrypt_key_ctx: str = DEFAULT_ENCRYPT_KEY_CTX,
+    store_name: str = DEFAULT_STORE_NAME,
+    base_url: str = DEFAULT_API_URL,
+    recreate_store: bool = False
+) -> Dict[str, Any]:
+    """
+    Load a custom AES key into the TPM using base64-encoded TPM blobs.
+    
+    Args mirror set_custom_aes_key_from_files, but accept base64 strings instead of file paths.
+    """
+    restore_result = restore_aes_key_from_recovery(
+        parent_ctx=parent_ctx,
+        encrypt_key_ctx=encrypt_key_ctx,
+        private_blob_b64=private_blob_b64,
+        public_blob_b64=public_blob_b64,
+        base_url=base_url
+    )
+    
+    if not restore_result.get("success"):
+        return restore_result
+    
+    if recreate_store:
+        _flush_context(base_url=base_url)
+        create_result = _make_request(
+            "POST",
+            "/tpm2/file-store-aes/create",
+            json_data={
+                "context_file": encrypt_key_ctx,
+                "store_name": store_name
+            },
+            base_url=base_url
+        )
+        _flush_context(base_url=base_url)
+        
+        if not create_result.get("success"):
+            return {
+                "success": False,
+                "error": f"AES key loaded but failed to create encrypted store '{store_name}': {create_result.get('error', 'Unknown error')}"
+            }
+    
+    return {
+        "success": True,
+        "message": "Custom AES key loaded successfully",
+        "context_file": encrypt_key_ctx,
+        "store_name": store_name,
+        "recreated_store": recreate_store
+    }
+
+
 def _ensure_tpm_setup(
     primary_ctx: str = DEFAULT_PRIMARY_CTX,
     encrypt_key_ctx: str = DEFAULT_ENCRYPT_KEY_CTX,
@@ -293,6 +679,12 @@ def _ensure_tpm_setup(
                         "error": f"Failed to create AES key: {result.get('error', 'Unknown error')}"
                     }
         else:
+            if result.get("action") == "aes_key_created":
+                _emit_aes_recovery_material(
+                    recovery_material=result.get("recovery_material"),
+                    encrypt_key_ctx=encrypt_key_ctx,
+                    store_name=store_name
+                )
             # Verify the context file exists in the response
             if result.get("context_file") is None:
                 # Try to manually load the key if auto-load failed
@@ -539,7 +931,7 @@ def read_key_from_tpm(
 
 # Example usage
 if __name__ == "__main__":
-    # Step 1: Set up Docker container (run this before using TPM funcpythontions)
+#     # Step 1: Set up Docker container (run this before using TPM funcpythontions)
     print("Setting up Docker container...")
     docker_result = setup_docker_container()
     if not docker_result.get("success"):
@@ -547,9 +939,9 @@ if __name__ == "__main__":
         exit(1)
     print(f"Docker setup: {docker_result.get('message')}\n")
     
-    # Step 2: Write a pubkey
+#     # Step 2: Write a pubkey
 #     print("Writing pubkey to TPM...")
-#     result = write_key_to_tpm("pubkey", """-----BEGIN PUBLIC KEY-----
+#     result = write_key_to_tpm("pubkey2", """-----BEGIN PUBLIC KEY-----
 # MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDZqVfeViSx34IzP5XL3bxA08vD
 # hgrQu3JStfQl2rjETY3O5hmUs/A2ZKKRZgBQvTO70cIYaS5rQoz0Be96iOdEwOmb
 # Rt+ky3Zh4iQBTPRWWK1x7F/r1K8PBSTX+kKdcawSTTTtWUyC3O8U1GxzzukonZQx
@@ -559,10 +951,21 @@ if __name__ == "__main__":
     
     # Step 3: Read the pubkey back
     # print("\nReading pubkey from TPM...")
-    # result = read_key_from_tpm("roy.pem")
+    # result = read_key_from_tpm("tpm-software/royb")
     # print(f"Read result: {result}")
 
-    
+    # Recovery flow overview:
+    # 1. When _ensure_tpm_setup() creates an AES key for the first time, we capture TPM blobs
+    #    (base64) in the API response and print them with _emit_aes_recovery_material().
+    # 2. Operators should call save_recovery_material_to_directory() to persist those blobs
+    #    to disk (or other secret storage) as .priv/.pub files.
+    # 3. On a fresh container or after TPM state loss, use restore_aes_key_from_recovery()
+    #    with either the saved base64 strings or blob files to rebuild the AES context.
+    # 4. Higher-level helpers set_custom_aes_key_from_files()/set_custom_aes_key_from_base64()
+    #    wrap that restore call and optionally recreate the encrypted filestore in one shot.
+    # 5. Once the AES key is restored, read_key_from_tpm()/write_key_to_tpm() resume working
+    #    against the original encrypted data.
+
     # if result.get("success"):
     #     print(f"Retrieved value: {result.get('value')}")
 

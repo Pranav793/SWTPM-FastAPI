@@ -245,4 +245,7 @@ yarn-error.log*
 
 # Local development
 .local/
-local/ 
+local/
+
+# Shared directory for persistent TPM2 file stores
+shared_dir/ 

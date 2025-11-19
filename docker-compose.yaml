@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  tpm2-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tpm2-api
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount shared directory for persistent storage of encrypted file stores
+      # This ensures the .json file store persists even if the container is removed
+      - ./shared_dir:/opt/shared
+      # Mount TPM emulator state directory for persistence
+      # This ensures the TPM state (keys, contexts) persists across container restarts
+      - ./shared_dir/tpm_state:/tmp/tpm2-emulated
+    working_dir: /opt/shared
+    # Run the API from the shared directory so all files (context files and stores) are saved there
+    # Ensure the shared directory and TPM state directory are writable before starting the API
+    command: sh -c "chmod 777 /opt/shared 2>/dev/null || true && mkdir -p /tmp/tpm2-emulated && chmod 700 /tmp/tpm2-emulated 2>/dev/null || true && cd /opt/shared && python3 /opt/tpm2_rest_api.py"
+    user: root
+    environment:
+      - TSS2_TCTI=swtpm:host=127.0.0.1,port=2321
+      - TPM2TOOLS_TCTI=swtpm:host=127.0.0.1,port=2321
+    restart: unless-stopped
+
+# mkdir -p shared_dir && chmod 777 shared_dir
