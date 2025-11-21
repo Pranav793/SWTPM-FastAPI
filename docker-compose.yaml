@@ -26,3 +26,8 @@ services:
     restart: unless-stopped
 
 # mkdir -p shared_dir && chmod 777 shared_dir
+
+
+# first time setup:
+#    mkdir -p shared_dir/tpm_state && chmod 777 shared_dir shared_dir/tpm_state
+#    docker-compose up -d

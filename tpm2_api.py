@@ -9,7 +9,8 @@ import base64
 import subprocess
 import tempfile
 from typing import Dict, List, Optional, Any
-from pathlib import Path
+
+TEMP_DECRYPTED_AES_FILE = "temp_decrypted_aes.json"
 
 class TPM2API:
     """
@@ -43,6 +44,14 @@ class TPM2API:
                 raise Exception(f"TPM2 connection failed: {result['error']}")
         except Exception as e:
             raise Exception(f"Failed to connect to TPM: {e}")
+
+    def _cleanup_temp_decrypted_file(self) -> None:
+        """Remove the temporary decrypted AES file if it exists."""
+        if os.path.exists(TEMP_DECRYPTED_AES_FILE):
+            try:
+                os.unlink(TEMP_DECRYPTED_AES_FILE)
+            except OSError:
+                pass
     
     def _run_command(self, cmd: List[str], input_data: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -710,6 +719,23 @@ class TPM2API:
         Returns:
             Dictionary with decryption result
         """
+        if not os.path.exists(context_file):
+            return {
+                "success": False,
+                "error": f"AES context file '{context_file}' does not exist; AES key is not loaded"
+            }
+
+        # Confirm TPM can read the context before attempting decryption
+        ctx_check = self._run_command(['tpm2_readpublic', '-c', context_file])
+        if not ctx_check.get("success"):
+            return {
+                "success": False,
+                "error": (
+                    f"AES context '{context_file}' is not valid (failed to read context: "
+                    f"{ctx_check.get('error', 'Unknown error')})"
+                )
+            }
+
         try:
             # Decode base64 encrypted data with proper padding handling
             # Base64 strings must be multiples of 4 characters
@@ -722,12 +748,12 @@ class TPM2API:
                     decoded_encrypted = base64.b64decode(encrypted_data + '=' * padding_needed, validate=True)
                 else:
                     raise ValueError(f"Invalid base64-encoded string: number of data characters ({len(encrypted_data)}) cannot be processed")
-            
+
             # Create temporary file for encrypted data
             with tempfile.NamedTemporaryFile(delete=False, mode='wb') as temp_file:
                 temp_file.write(decoded_encrypted)
                 temp_encrypted_file = temp_file.name
-            
+
             try:
                 # Use -d or --decrypt for decryption
                 # Input file should be the last argument
@@ -740,14 +766,14 @@ class TPM2API:
                     '-o', decrypted_file,
                     temp_encrypted_file  # Input file as last argument
                 ]
-                
+
                 result = self._run_command(cmd)
-                
+
                 if result['success']:
                     # Read decrypted file
                     with open(decrypted_file, 'rb') as f:
                         decrypted_data = f.read()
-                    
+
                     return {
                         "success": True,
                         "decrypted_data": base64.b64encode(decrypted_data).decode(),
@@ -756,11 +782,11 @@ class TPM2API:
                     }
                 else:
                     return result
-                    
+
             finally:
                 # Clean up temporary file
                 os.unlink(temp_encrypted_file)
-                
+
         except Exception as e:
             return {"success": False, "error": str(e)}
 
@@ -1106,14 +1132,15 @@ class TPM2API:
                 decrypt_result = self.decrypt_data_aes(
                     context_file, 
                     base64.b64encode(encrypted_data).decode(), 
-                    "temp_decrypted_aes.json"
+                    TEMP_DECRYPTED_AES_FILE
                 )
                 
                 if not decrypt_result['success']:
+                    self._cleanup_temp_decrypted_file()
                     return decrypt_result
                 
                 # Parse the decrypted JSON
-                with open("temp_decrypted_aes.json", 'r') as f:
+                with open(TEMP_DECRYPTED_AES_FILE, 'r') as f:
                     store_data = json.load(f)
             else:
                 # Create new empty store
@@ -1131,8 +1158,7 @@ class TPM2API:
             )
             
             # Clean up temporary file
-            if os.path.exists("temp_decrypted_aes.json"):
-                os.unlink("temp_decrypted_aes.json")
+            self._cleanup_temp_decrypted_file()
             
             if encrypt_result['success']:
                 return {
@@ -1148,8 +1174,7 @@ class TPM2API:
                 
         except Exception as e:
             # Clean up temporary file on error
-            if os.path.exists("temp_decrypted_aes.json"):
-                os.unlink("temp_decrypted_aes.json")
+            self._cleanup_temp_decrypted_file()
             return {"success": False, "error": str(e)}
 
     def retrieve_key_value_aes(self, context_file: str, store_name: str, key: str) -> Dict[str, Any]:
@@ -1176,18 +1201,19 @@ class TPM2API:
             decrypt_result = self.decrypt_data_aes(
                 context_file, 
                 base64.b64encode(encrypted_data).decode(), 
-                "temp_decrypted_aes.json"
+                TEMP_DECRYPTED_AES_FILE
             )
             
             if not decrypt_result['success']:
+                self._cleanup_temp_decrypted_file()
                 return decrypt_result
             
             # Step 2: Parse the decrypted JSON and retrieve the key
-            with open("temp_decrypted_aes.json", 'r') as f:
+            with open(TEMP_DECRYPTED_AES_FILE, 'r') as f:
                 store_data = json.load(f)
             
             # Clean up temporary file
-            os.unlink("temp_decrypted_aes.json")
+            self._cleanup_temp_decrypted_file()
             
             if key in store_data:
                 return {
@@ -1206,8 +1232,7 @@ class TPM2API:
                 
         except Exception as e:
             # Clean up temporary file on error
-            if os.path.exists("temp_decrypted_aes.json"):
-                os.unlink("temp_decrypted_aes.json")
+            self._cleanup_temp_decrypted_file()
             return {"success": False, "error": str(e)}
 
     def list_file_store_keys_aes(self, context_file: str, store_name: str) -> Dict[str, Any]:
@@ -1233,18 +1258,19 @@ class TPM2API:
             decrypt_result = self.decrypt_data_aes(
                 context_file, 
                 base64.b64encode(encrypted_data).decode(), 
-                "temp_decrypted_aes.json"
+                TEMP_DECRYPTED_AES_FILE
             )
             
             if not decrypt_result['success']:
+                self._cleanup_temp_decrypted_file()
                 return decrypt_result
             
             # Step 2: Parse the decrypted JSON and get all keys
-            with open("temp_decrypted_aes.json", 'r') as f:
+            with open(TEMP_DECRYPTED_AES_FILE, 'r') as f:
                 store_data = json.load(f)
             
             # Clean up temporary file
-            os.unlink("temp_decrypted_aes.json")
+            self._cleanup_temp_decrypted_file()
             
             return {
                 "success": True,
@@ -1256,8 +1282,7 @@ class TPM2API:
                 
         except Exception as e:
             # Clean up temporary file on error
-            if os.path.exists("temp_decrypted_aes.json"):
-                os.unlink("temp_decrypted_aes.json")
+            self._cleanup_temp_decrypted_file()
             return {"success": False, "error": str(e)}
 
     def delete_key_value_aes(self, context_file: str, store_name: str, key: str) -> Dict[str, Any]:
@@ -1284,19 +1309,20 @@ class TPM2API:
             decrypt_result = self.decrypt_data_aes(
                 context_file, 
                 base64.b64encode(encrypted_data).decode(), 
-                "temp_decrypted_aes.json"
+                TEMP_DECRYPTED_AES_FILE
             )
-            
+
             if not decrypt_result['success']:
+                self._cleanup_temp_decrypted_file()
                 return decrypt_result
             
             # Step 2: Parse the decrypted JSON and delete the key
-            with open("temp_decrypted_aes.json", 'r') as f:
+            with open(TEMP_DECRYPTED_AES_FILE, 'r') as f:
                 store_data = json.load(f)
             
             if key not in store_data:
                 # Clean up temporary file
-                os.unlink("temp_decrypted_aes.json")
+                self._cleanup_temp_decrypted_file()
                 return {
                     "success": False,
                     "error": f"Key '{key}' not found in AES file store",
@@ -1316,7 +1342,7 @@ class TPM2API:
             )
             
             # Clean up temporary file
-            os.unlink("temp_decrypted_aes.json")
+            self._cleanup_temp_decrypted_file()
             
             if encrypt_result['success']:
                 return {
@@ -1332,8 +1358,7 @@ class TPM2API:
                 
         except Exception as e:
             # Clean up temporary file on error
-            if os.path.exists("temp_decrypted_aes.json"):
-                os.unlink("temp_decrypted_aes.json")
+            self._cleanup_temp_decrypted_file()
             return {"success": False, "error": str(e)}
 
     def full_reset(self) -> Dict[str, Any]:
