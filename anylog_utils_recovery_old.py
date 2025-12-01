@@ -10,7 +10,6 @@ Uses HTTP requests to communicate with the TPM2 REST API.
 import base64
 import os
 from pathlib import Path
-from re import S
 import requests
 import subprocess
 import time
@@ -35,262 +34,64 @@ if TEMP_DECRYPTED_AES.exists():
         pass
 
 
-# def _resolve_shared_file_paths(raw_path: Optional[str]) -> Set[Path]:
-#     candidates: Set[Path] = set()
-#     if not raw_path:
-#         return candidates
-#     stripped = raw_path.strip()
-#     if not stripped:
-#         return candidates
-#     candidate = Path(stripped)
-#     candidates.add(candidate)
-#     if candidate.is_absolute():
-#         try:
-#             rel = candidate.relative_to("/opt/shared")
-#             candidates.add(SHARED_DIR / rel)
-#         except Exception:
-#             pass
-#     else:
-#         if candidate.parts and candidate.parts[0] == "shared_dir":
-#             candidates.add(candidate)
-#         else:
-#             candidates.add(SHARED_DIR / candidate)
-#     return candidates
-
-
-# def _path_to_working_dir_relative(path: Path) -> Optional[str]:
-#     """
-#     Convert a path to a relative path that works in the container's working directory.
-#     The container's working directory is /opt/shared which maps to ./shared_dir on the host.
-    
-#     Returns the relative filename (e.g., "anylog_encrypt_key_aes.pub") or None if conversion fails.
-#     """
-#     if not path:
-#         return None
-    
-#     try:
-#         # If path is absolute and starts with /opt/shared, extract relative part
-#         if path.is_absolute():
-#             try:
-#                 rel = path.relative_to("/opt/shared")
-#                 return str(rel)
-#             except ValueError:
-#                 # Try to resolve if it's a shared_dir absolute path
-#                 try:
-#                     shared_abs = SHARED_DIR.resolve()
-#                     if str(path).startswith(str(shared_abs)):
-#                         rel = path.relative_to(shared_abs)
-#                         return str(rel)
-#                 except (ValueError, AttributeError):
-#                     pass
-        
-#         # If path is in shared_dir (relative or absolute), extract relative part
-#         try:
-#             shared_resolved = SHARED_DIR.resolve()
-#             path_resolved = path.resolve() if path.exists() else path
-#             if str(path_resolved).startswith(str(shared_resolved)):
-#                 rel = Path(path_resolved).relative_to(shared_resolved)
-#                 return str(rel)
-#         except (ValueError, AttributeError, OSError):
-#             pass
-        
-#         # If path has "shared_dir" in parts, extract relative part
-#         if path.parts and path.parts[0] == "shared_dir":
-#             return str(Path(*path.parts[1:]))
-        
-#         # If path is a simple filename, return it as-is
-#         if len(path.parts) == 1:
-#             return path.name
-        
-#         # Otherwise, return just the filename (last part)
-#         return path.name
-#     except Exception:
-#         # If all else fails, try to return just the filename
-#         return path.name if path else None
-
-
-# def _remove_path_candidates(paths: Iterable[Path], base_url: str = DEFAULT_API_URL) -> None:
-#     """
-#     Remove file paths via the TPM REST API instead of direct file deletion.
-#     This allows working through the container's working directory when direct access is not available.
-#     """
-#     for path in paths:
-#         if not path:
-#             continue
-        
-#         # Convert path to working directory relative path
-#         relative_path = _path_to_working_dir_relative(path)
-#         if not relative_path:
-#             continue
-        
-#         # Delete file via REST API
-#         try:
-#             result = _make_request(
-#                 "POST",
-#                 "/tpm2/delete-file",
-#                 json_data={"file_path": relative_path},
-#                 base_url=base_url
-#             )
-#             if not result.get("success"):
-#                 # Log warning but don't fail - cleanup is best effort
-#                 print(f"Warning: Failed to delete file '{relative_path}' via API: {result.get('error', 'Unknown error')}")
-#         except Exception as e:
-#             # Log warning but don't fail - cleanup is best effort
-#             print(f"Warning: Failed to delete file '{relative_path}' via API: {e}")
-
-
-def _list_working_directory_files(base_url: str = DEFAULT_API_URL, directory: str = ".") -> Dict[str, Any]:
-    """
-    List files in the container's working directory via the TPM REST API.
-    
-    Args:
-        base_url: Base URL for the API
-        directory: Relative path to directory to list (default: current directory)
-        
-    Returns:
-        Dictionary with list of files and directories
-    """
-    try:
-        # Try GET endpoint first (easier to debug)
+def _resolve_shared_file_paths(raw_path: Optional[str]) -> Set[Path]:
+    candidates: Set[Path] = set()
+    if not raw_path:
+        return candidates
+    stripped = raw_path.strip()
+    if not stripped:
+        return candidates
+    candidate = Path(stripped)
+    candidates.add(candidate)
+    if candidate.is_absolute():
         try:
-            import requests
-            url = f"{base_url}/tpm2/list-files?directory={directory}"
-            response = requests.get(url, timeout=10)
-            
-            if response.status_code == 200:
-                result = response.json()
-                if "success" not in result:
-                    result["success"] = True
-                return result
-            else:
-                # Try to parse error
-                try:
-                    error_data = response.json()
-                    return {
-                        "success": False,
-                        "error": error_data.get("error", error_data.get("detail", f"HTTP {response.status_code}")),
-                        "status_code": response.status_code
-                    }
-                except Exception:
-                    return {
-                        "success": False,
-                        "error": f"HTTP {response.status_code}: {response.text}",
-                        "status_code": response.status_code
-                    }
-        except requests.exceptions.RequestException:
-            # Fall back to POST if GET fails
+            rel = candidate.relative_to("/opt/shared")
+            candidates.add(SHARED_DIR / rel)
+        except Exception:
             pass
-        
-        # Try POST endpoint
-        result = _make_request(
-            "POST",
-            "/tpm2/list-files",
-            json_data={"directory": directory},
-            base_url=base_url
-        )
-        # Check if result has success field - if not, it might be an error response
-        if "success" not in result:
-            return {
-                "success": False,
-                "error": f"Unexpected API response format: {result}"
-            }
-        return result
-    except Exception as e:
-        import traceback
-        return {
-            "success": False,
-            "error": f"Exception while listing files: {str(e)}\n{traceback.format_exc()}"
-        }
-
-
-def _delete_file_via_api(filename: str, base_url: str = DEFAULT_API_URL) -> bool:
-    """
-    Delete a single file via the REST API.
-    
-    Args:
-        filename: Name of the file to delete (relative to working directory)
-        base_url: Base URL for the API
-        
-    Returns:
-        True if file was deleted successfully or doesn't exist, False otherwise
-    """
-    try:
-        result = _make_request(
-            "POST",
-            "/tpm2/delete-file",
-            json_data={"file_path": filename},
-            base_url=base_url
-        )
-        if result.get("success"):
-            return True
-        else:
-            error_msg = result.get("error", "Unknown error")
-            # File doesn't exist is okay - consider it success
-            if "does not exist" in error_msg.lower():
-                return True
-            return False
-    except Exception:
-        return False
-
-
-def _cleanup_aes_blob_files(encrypt_key_ctx: str, extra_paths: Optional[Iterable[str]] = None, base_url: str = DEFAULT_API_URL) -> None:
-    """
-    Clean up AES blob files (.pub and .priv) via the TPM REST API.
-    
-    This function deletes files through the container's working directory using the REST API.
-    The container's working directory is /opt/shared which maps to ./shared_dir on the host.
-    
-    Args:
-        encrypt_key_ctx: Context file name (e.g., "anylog_encrypt_key_aes.ctx")
-        extra_paths: Optional list of additional file paths to delete (from API response)
-        base_url: Base URL for the REST API
-    """
-    # Determine which files to delete
-    files_to_delete = []
-    
-    # Extract base name from context file (remove .ctx extension if present)
-    # The context file is something like "anylog_encrypt_key_aes.ctx"
-    # We want to delete "anylog_encrypt_key_aes.pub" and "anylog_encrypt_key_aes.priv"
-    ctx_name = str(encrypt_key_ctx).strip()
-    if ctx_name.endswith('.ctx'):
-        base_name = ctx_name[:-4]  # Remove .ctx
-        files_to_delete.append(f"{base_name}.pub")
-        files_to_delete.append(f"{base_name}.priv")
     else:
-        # If no .ctx extension, use the name as-is
-        files_to_delete.append(f"{ctx_name}.pub")
-        files_to_delete.append(f"{ctx_name}.priv")
-    
-    # Add any extra paths from the API response
-    # These should already be just filenames like "anylog_encrypt_key_aes.pub"
+        if candidate.parts and candidate.parts[0] == "shared_dir":
+            candidates.add(candidate)
+        else:
+            candidates.add(SHARED_DIR / candidate)
+    return candidates
+
+
+def _remove_path_candidates(paths: Iterable[Path]) -> None:
+    for path in paths:
+        if not path:
+            continue
+        try:
+            if path.exists():
+                path.unlink()
+        except Exception:
+            pass
+
+
+def _cleanup_aes_blob_files(encrypt_key_ctx: str, extra_paths: Optional[Iterable[str]] = None) -> None:
+    ctx_path = Path(encrypt_key_ctx)
+    base = ctx_path.with_suffix("") if ctx_path.suffix == ".ctx" else ctx_path
+    candidates: Set[Path] = set()
+    candidates.update(_resolve_shared_file_paths(str(base.with_suffix(".pub"))))
+    candidates.update(_resolve_shared_file_paths(str(base.with_suffix(".priv"))))
     if extra_paths:
-        for path in extra_paths:
-            if path:
-                # Extract just the filename (in case there's any path component)
-                filename = Path(str(path).strip()).name
-                if filename and filename not in files_to_delete:
-                    files_to_delete.append(filename)
-    
-    # Remove duplicates while preserving order
-    files_to_delete = list(dict.fromkeys(files_to_delete))
-    
-    # Delete files via REST API
-    for filename in files_to_delete:
-        _delete_file_via_api(filename, base_url=base_url)
+        for extra in extra_paths:
+            candidates.update(_resolve_shared_file_paths(extra))
+    _remove_path_candidates(candidates)
 
 
 def setup_docker_container(
-    build_path: str = ".",
-    image_name: str = "tpm2-api",
-    container_name: str = "tpm2-test",
-    port: int = 8000,
-    wait_for_ready: bool = True,
-    wait_timeout: int = 60
+        build_path: str = ".",
+        image_name: str = "tpm2-api",
+        container_name: str = "tpm2-test",
+        port: int = 8000,
+        wait_for_ready: bool = True,
+        wait_timeout: int = 60
 ) -> Dict[str, Any]:
     """
     Set up the TPM2 Docker container by removing old containers/images,
     building a new image, and running the container.
-    
+
     Args:
         build_path: Path to the directory containing Dockerfile (default: current directory)
         image_name: Docker image name (default: tpm2-api)
@@ -298,7 +99,7 @@ def setup_docker_container(
         port: Port to expose (default: 8000)
         wait_for_ready: Whether to wait for the API to be ready (default: True)
         wait_timeout: Maximum seconds to wait for API readiness (default: 60)
-        
+
     Returns:
         Dictionary with success status and any errors
     """
@@ -313,7 +114,7 @@ def setup_docker_container(
             text=True
         )
         # Ignore errors - containers/images might not exist
-        
+
         # Step 2: Build Docker image
         print(f"Building Docker image '{image_name}'...")
         build_cmd = ["docker", "build", "-t", image_name, build_path]
@@ -323,15 +124,15 @@ def setup_docker_container(
             text=True,
             timeout=300  # 5 minute timeout for build
         )
-        
+
         if result.returncode != 0:
             return {
                 "success": False,
                 "error": f"Failed to build Docker image: {result.stderr}"
             }
-        
+
         print(f"Docker image '{image_name}' built successfully")
-        
+
         # Step 3: Run Docker container
         print(f"Starting Docker container '{container_name}'...")
         run_cmd = [
@@ -347,22 +148,22 @@ def setup_docker_container(
             text=True,
             timeout=30
         )
-        
+
         if result.returncode != 0:
             return {
                 "success": False,
                 "error": f"Failed to run Docker container: {result.stderr}"
             }
-        
+
         container_id = result.stdout.strip()
         print(f"Docker container '{container_name}' started (ID: {container_id})")
-        
+
         # Step 4: Wait for API to be ready (optional)
         if wait_for_ready:
             print("Waiting for API to be ready...")
             api_url = f"http://localhost:{port}"
             start_time = time.time()
-            
+
             while time.time() - start_time < wait_timeout:
                 try:
                     response = requests.get(f"{api_url}/health", timeout=2)
@@ -375,9 +176,9 @@ def setup_docker_container(
                         }
                 except requests.exceptions.RequestException:
                     pass
-                
+
                 time.sleep(2)
-            
+
             return {
                 "success": False,
                 "error": f"Container started but API did not become ready within {wait_timeout} seconds"
@@ -388,7 +189,7 @@ def setup_docker_container(
                 "container_id": container_id,
                 "message": f"Container '{container_name}' started (not waiting for API readiness)"
             }
-            
+
     except subprocess.TimeoutExpired:
         return {
             "success": False,
@@ -401,42 +202,40 @@ def setup_docker_container(
         }
 
 
-def _make_request(method: str, endpoint: str, json_data: Optional[Dict[str, Any]] = None, base_url: str = DEFAULT_API_URL) -> Dict[str, Any]:
+def _make_request(method: str, endpoint: str, json_data: Optional[Dict[str, Any]] = None,
+                  base_url: str = DEFAULT_API_URL) -> Dict[str, Any]:
     """
     Make an HTTP request to the TPM2 REST API
-    
+
     Args:
         method: HTTP method (e.g., "POST", "GET")
         endpoint: API endpoint path (e.g., "/tpm2/create-primary")
         json_data: Optional JSON data for the request
         base_url: Base URL for the API
-        
+
     Returns:
         Dictionary with response data or error information
     """
     try:
         url = f"{base_url}{endpoint}"
         response = requests.request(method, url, json=json_data, timeout=30)
-        
+
         if response.status_code == 200:
             return response.json()
         else:
             # Try to parse the error response
             try:
                 error_json = response.json()
-                # Extract error message - check multiple possible fields
-                error_msg = error_json.get("detail") or error_json.get("error") or error_json.get("message") or "Unknown error"
-                
+                # Extract error message
+                error_msg = error_json.get("detail", error_json.get("error", "Unknown error"))
                 # Clean up error messages that might have status code prefixes like "400: ..."
                 if isinstance(error_msg, str) and ":" in error_msg and error_msg.split(":")[0].strip().isdigit():
                     error_msg = ":".join(error_msg.split(":")[1:]).strip()
-                
+
                 # If the error response has useful fields, preserve them
                 error_result = {
                     "success": False,
-                    "error": error_msg,
-                    "status_code": response.status_code,
-                    "url": url
+                    "error": error_msg
                 }
                 # Preserve additional fields like available_keys if present
                 if "available_keys" in error_json:
@@ -446,32 +245,28 @@ def _make_request(method: str, endpoint: str, json_data: Optional[Dict[str, Any]
                 # If we can't parse JSON, use the text
                 return {
                     "success": False,
-                    "error": f"API request failed with status {response.status_code}: {response.text[:200]}",
-                    "status_code": response.status_code,
-                    "url": url
+                    "error": f"API request failed with status {response.status_code}: {response.text}"
                 }
     except requests.exceptions.RequestException as e:
         return {
             "success": False,
-            "error": f"Network error: {str(e)}",
-            "url": f"{base_url}{endpoint}"
+            "error": f"Network error: {str(e)}"
         }
     except Exception as e:
         return {
             "success": False,
-            "error": f"Unexpected error: {str(e)}",
-            "url": f"{base_url}{endpoint}"
+            "error": f"Unexpected error: {str(e)}"
         }
 
 
 def _check_api_connectivity(base_url: str = DEFAULT_API_URL, timeout: int = 5) -> Dict[str, Any]:
     """
     Check if the TPM2 REST API at base_url is reachable and responding.
-    
+
     Args:
         base_url: Base URL for the API
         timeout: Timeout in seconds for the connectivity check (default: 5)
-    
+
     Returns:
         Dictionary with success status and any errors
     """
@@ -485,7 +280,7 @@ def _check_api_connectivity(base_url: str = DEFAULT_API_URL, timeout: int = 5) -
         except requests.exceptions.RequestException:
             # Health endpoint might not exist, try the root endpoint
             pass
-        
+
         # If health endpoint doesn't work, try the root endpoint
         try:
             response = requests.get(base_url, timeout=timeout)
@@ -516,9 +311,9 @@ def _check_api_connectivity(base_url: str = DEFAULT_API_URL, timeout: int = 5) -
 def _flush_context(base_url: str = DEFAULT_API_URL) -> None:
     """Flush TPM contexts to avoid memory issues"""
     try:
-        result = _make_request("POST", "/tpm2/flush-context", 
-                              json_data={"context_type": "transient"},
-                              base_url=base_url)
+        result = _make_request("POST", "/tpm2/flush-context",
+                               json_data={"context_type": "transient"},
+                               base_url=base_url)
         if not result.get("success"):
             # Log warning but don't fail - flushing is best effort
             print(f"Warning: Failed to flush TPM context: {result.get('error', 'Unknown error')}")
@@ -527,9 +322,9 @@ def _flush_context(base_url: str = DEFAULT_API_URL) -> None:
 
 
 def _emit_aes_recovery_material(
-    recovery_material: Optional[Dict[str, Any]],
-    encrypt_key_ctx: str,
-    store_name: str
+        recovery_material: Optional[Dict[str, Any]],
+        encrypt_key_ctx: str,
+        store_name: str
 ) -> None:
     """
     Print recovery material for a newly created AES key so operators can back it up.
@@ -537,7 +332,7 @@ def _emit_aes_recovery_material(
     """
     if not recovery_material:
         return
-    
+
     validation_errors = _validate_recovery_material(recovery_material)
     if validation_errors:
         print("Warning: Recovery material validation failed:")
@@ -545,32 +340,32 @@ def _emit_aes_recovery_material(
             print(f" - {error}")
         # Continue printing any captured blobs even if validation failed,
         # since operators might still salvage the data.
-    
+
     if "private_blob_error" in recovery_material:
         print(f"Warning: Unable to capture AES private blob: {recovery_material['private_blob_error']}")
     if "public_blob_error" in recovery_material:
         print(f"Warning: Unable to capture AES public blob: {recovery_material['public_blob_error']}")
-    
+
     if "private_blob_b64" not in recovery_material:
         return
-    
+
     private_blob = recovery_material.get("private_blob_b64")
     public_blob = recovery_material.get("public_blob_b64")
-    
+
     print("\n=== AnyLog TPM AES Recovery Material ===")
     print("A new AES key was created for the encrypted file store.")
     print(f"Context file: {encrypt_key_ctx}")
     print(f"File store: {store_name}")
     print("\nPrivate blob (base64):")
     print(private_blob)
-    
+
     if public_blob:
         print("\nPublic blob (base64):")
         print(public_blob)
-    
-    print("\nStore these blobs securely off-container. They are required to restore the AES key if the TPM state is lost.")
+
+    print(
+        "\nStore these blobs securely off-container. They are required to restore the AES key if the TPM state is lost.")
     print("=== End AES Recovery Material ===\n")
-    
 
 
 def _validate_recovery_material(recovery_material: Dict[str, Any]) -> List[str]:
@@ -618,18 +413,18 @@ def _write_blob_to_file(blob_b64: str, destination: str, label: str) -> str:
 
 
 def save_recovery_material_to_directory(
-    recovery_material: Dict[str, Any],
-    output_dir: str,
-    prefix: Optional[str] = None
+        recovery_material: Dict[str, Any],
+        output_dir: str,
+        prefix: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Persist AES recovery blobs to disk so they can be re-imported later.
-    
+
     Args:
         recovery_material: Dict containing 'private_blob_b64' (required) and 'public_blob_b64' (optional)
         output_dir: Directory where the files should be written
         prefix: Optional prefix for the generated filenames (defaults to 'anylog_encrypt_key_aes')
-        
+
     Returns:
         Dict with success flag and file paths
     """
@@ -638,20 +433,20 @@ def save_recovery_material_to_directory(
             "success": False,
             "error": "No recovery material provided"
         }
-    
+
     if "private_blob_b64" not in recovery_material:
         return {
             "success": False,
             "error": "Recovery material missing required 'private_blob_b64' field"
         }
-    
+
     prefix = prefix or "anylog_encrypt_key_aes"
     output_path = Path(output_dir).expanduser().resolve()
     output_path.mkdir(parents=True, exist_ok=True)
-    
+
     private_path = output_path / f"{prefix}.priv"
     public_path = None
-    
+
     try:
         written_private = _write_blob_to_file(recovery_material["private_blob_b64"], str(private_path), "private")
         if "public_blob_b64" in recovery_material and recovery_material["public_blob_b64"]:
@@ -659,7 +454,7 @@ def save_recovery_material_to_directory(
             written_public = _write_blob_to_file(recovery_material["public_blob_b64"], str(public_path), "public")
         else:
             written_public = None
-        
+
         return {
             "success": True,
             "private_file": written_private,
@@ -674,21 +469,21 @@ def save_recovery_material_to_directory(
 
 
 def restore_aes_key_from_recovery(
-    parent_ctx: str = DEFAULT_PRIMARY_CTX,
-    encrypt_key_ctx: str = DEFAULT_ENCRYPT_KEY_CTX,
-    private_blob_b64: Optional[str] = None,
-    public_blob_b64: Optional[str] = None,
-    private_blob_path: Optional[str] = None,
-    public_blob_path: Optional[str] = None,
-    base_url: str = DEFAULT_API_URL,
-    ensure_primary: bool = True,
-    cleanup_temporary: bool = True
+        parent_ctx: str = DEFAULT_PRIMARY_CTX,
+        encrypt_key_ctx: str = DEFAULT_ENCRYPT_KEY_CTX,
+        private_blob_b64: Optional[str] = None,
+        public_blob_b64: Optional[str] = None,
+        private_blob_path: Optional[str] = None,
+        public_blob_path: Optional[str] = None,
+        base_url: str = DEFAULT_API_URL,
+        ensure_primary: bool = True,
+        cleanup_temporary: bool = True
 ) -> Dict[str, Any]:
     """
     Restore the AES encryption key inside the TPM using previously exported blobs.
-    
+
     The caller can supply either base64-encoded blobs, file paths, or a mix of both.
-    
+
     Args:
         parent_ctx: Primary context file that owns the AES key
         encrypt_key_ctx: Target context file to recreate for the AES key
@@ -697,22 +492,22 @@ def restore_aes_key_from_recovery(
         base_url: REST API base URL
         ensure_primary: Whether to attempt re-creating the parent primary key if missing
         cleanup_temporary: Remove temporary files created for base64 blobs after loading
-        
+
     Returns:
         Dict with success flag and any relevant messages/errors
     """
     tmp_files: List[str] = []
-    
+
     def resolve_blob(label: str, blob_b64: Optional[str], blob_path: Optional[str], suffix: str) -> Optional[str]:
         # Ensure shared_dir exists
-        shared_dir = SHARED_DIR
+        shared_dir = Path("shared_dir")
         shared_dir.mkdir(exist_ok=True)
-        
+
         if blob_path:
             path = Path(blob_path).expanduser().resolve()
             if not path.exists():
                 raise FileNotFoundError(f"{label.capitalize()} blob file not found: {path}")
-            
+
             # Check if path is already in shared_dir
             try:
                 # Try to get relative path from shared_dir
@@ -728,7 +523,7 @@ def restore_aes_key_from_recovery(
                 tmp_files.append(str(tmp_path_host))
                 # Return relative path (just filename) that container can access
                 return tmp_filename
-        
+
         if blob_b64:
             # Write temp files to shared_dir so the Docker container can access them
             # shared_dir is mounted at /opt/shared in the container (which is the working directory)
@@ -740,13 +535,13 @@ def restore_aes_key_from_recovery(
             # Return relative path (just filename) that container can access
             # The container's working directory is /opt/shared, so just the filename works
             return tmp_filename
-        
+
         return None
-    
+
     try:
         private_file = resolve_blob("private", private_blob_b64, private_blob_path, ".priv")
         public_file = resolve_blob("public", public_blob_b64, public_blob_path, ".pub")
-        
+
         if not private_file:
             return {
                 "success": False,
@@ -757,7 +552,7 @@ def restore_aes_key_from_recovery(
                 "success": False,
                 "error": "A public blob is required to restore the AES key"
             }
-        
+
         # Optionally recreate the primary parent (best effort)
         # IMPORTANT: Do NOT create a new primary key if TPM state is persisted and contains the original primary key.
         # Creating a new primary key would overwrite the old one, making recovery blobs unusable.
@@ -765,11 +560,11 @@ def restore_aes_key_from_recovery(
         # We'll try to use it directly - if it doesn't exist, the AES key load will fail with a clear error.
         if ensure_primary:
             primary_result = _make_request(
-                    "POST",
-                    "/tpm2/create-primary",
-                    json_data={"hierarchy": "o", "context_file": parent_ctx},
-                    base_url=base_url
-                )
+                "POST",
+                "/tpm2/create-primary",
+                json_data={"hierarchy": "o", "context_file": parent_ctx},
+                base_url=base_url
+            )
             if not primary_result.get("success"):
                 error_msg = primary_result.get("error", "").lower()
                 # if the backend ever returns an "already exists" style error, ignore it
@@ -792,7 +587,7 @@ def restore_aes_key_from_recovery(
             #         primary_ctx_exists = primary_path.exists() or Path(f"shared_dir/{parent_ctx}").exists()
             # except Exception:
             #     primary_ctx_exists = False
-            
+
             # # Only try to create primary key if context file doesn't exist
             # # If it exists, assume primary key is in TPM state and use it directly
             # if not primary_ctx_exists:
@@ -810,9 +605,9 @@ def restore_aes_key_from_recovery(
             #                 "success": False,
             #                 "error": f"Failed to ensure primary key '{parent_ctx}': {primary_result.get('error', 'Unknown error')}"
             #             }
-        
+
         _flush_context(base_url=base_url)
-        
+
         load_result = _make_request(
             "POST",
             "/tpm2/load-key",
@@ -824,9 +619,9 @@ def restore_aes_key_from_recovery(
             },
             base_url=base_url
         )
-        
+
         _flush_context(base_url=base_url)
-        
+
         if load_result.get("success"):
             return {
                 "success": True,
@@ -856,17 +651,17 @@ def restore_aes_key_from_recovery(
 
 
 def set_custom_aes_key_from_files(
-    private_blob_path: str,
-    public_blob_path: str,
-    parent_ctx: str = DEFAULT_PRIMARY_CTX,
-    encrypt_key_ctx: str = DEFAULT_ENCRYPT_KEY_CTX,
-    store_name: str = DEFAULT_STORE_NAME,
-    base_url: str = DEFAULT_API_URL,
-    recreate_store: bool = False
+        private_blob_path: str,
+        public_blob_path: str,
+        parent_ctx: str = DEFAULT_PRIMARY_CTX,
+        encrypt_key_ctx: str = DEFAULT_ENCRYPT_KEY_CTX,
+        store_name: str = DEFAULT_STORE_NAME,
+        base_url: str = DEFAULT_API_URL,
+        recreate_store: bool = False
 ) -> Dict[str, Any]:
     """
     Load a custom AES key into the TPM using existing TPM blob files on disk.
-    
+
     Args:
         private_blob_path/public_blob_path: Paths to TPM private/public blob files
         parent_ctx: Primary parent context file
@@ -874,7 +669,7 @@ def set_custom_aes_key_from_files(
         store_name: AES file store name (used if recreate_store=True)
         base_url: REST API base URL
         recreate_store: If True, reinitialize the encrypted file store after loading the key
-        
+
     Returns:
         Dict with success flag and any messages/errors
     """
@@ -885,10 +680,10 @@ def set_custom_aes_key_from_files(
         public_blob_path=public_blob_path,
         base_url=base_url
     )
-    
+
     if not restore_result.get("success"):
         return restore_result
-    
+
     if recreate_store:
         _flush_context(base_url=base_url)
         create_result = _make_request(
@@ -901,13 +696,13 @@ def set_custom_aes_key_from_files(
             base_url=base_url
         )
         _flush_context(base_url=base_url)
-        
+
         if not create_result.get("success"):
             return {
                 "success": False,
                 "error": f"AES key loaded but failed to create encrypted store '{store_name}': {create_result.get('error', 'Unknown error')}"
             }
-    
+
     return {
         "success": True,
         "message": "Custom AES key loaded successfully",
@@ -918,17 +713,17 @@ def set_custom_aes_key_from_files(
 
 
 def set_custom_aes_key_from_base64(
-    private_blob_b64: str,
-    public_blob_b64: str,
-    parent_ctx: str = DEFAULT_PRIMARY_CTX,
-    encrypt_key_ctx: str = DEFAULT_ENCRYPT_KEY_CTX,
-    store_name: str = DEFAULT_STORE_NAME,
-    base_url: str = DEFAULT_API_URL,
-    recreate_store: bool = False
+        private_blob_b64: str,
+        public_blob_b64: str,
+        parent_ctx: str = DEFAULT_PRIMARY_CTX,
+        encrypt_key_ctx: str = DEFAULT_ENCRYPT_KEY_CTX,
+        store_name: str = DEFAULT_STORE_NAME,
+        base_url: str = DEFAULT_API_URL,
+        recreate_store: bool = False
 ) -> Dict[str, Any]:
     """
     Load a custom AES key into the TPM using base64-encoded TPM blobs.
-    
+
     Args mirror set_custom_aes_key_from_files, but accept base64 strings instead of file paths.
     """
     restore_result = restore_aes_key_from_recovery(
@@ -938,10 +733,10 @@ def set_custom_aes_key_from_base64(
         public_blob_b64=public_blob_b64,
         base_url=base_url
     )
-    
+
     if not restore_result.get("success"):
         return restore_result
-    
+
     if recreate_store:
         _flush_context(base_url=base_url)
         create_result = _make_request(
@@ -954,13 +749,13 @@ def set_custom_aes_key_from_base64(
             base_url=base_url
         )
         _flush_context(base_url=base_url)
-        
+
         if not create_result.get("success"):
             return {
                 "success": False,
                 "error": f"AES key loaded but failed to create encrypted store '{store_name}': {create_result.get('error', 'Unknown error')}"
             }
-    
+
     return {
         "success": True,
         "message": "Custom AES key loaded successfully",
@@ -971,25 +766,25 @@ def set_custom_aes_key_from_base64(
 
 
 def _ensure_tpm_setup(
-    primary_ctx: str = DEFAULT_PRIMARY_CTX,
-    encrypt_key_ctx: str = DEFAULT_ENCRYPT_KEY_CTX,
-    store_name: str = DEFAULT_STORE_NAME,
-    base_url: str = DEFAULT_API_URL
+        primary_ctx: str = DEFAULT_PRIMARY_CTX,
+        encrypt_key_ctx: str = DEFAULT_ENCRYPT_KEY_CTX,
+        store_name: str = DEFAULT_STORE_NAME,
+        base_url: str = DEFAULT_API_URL
 ) -> Dict[str, Any]:
     """
     Ensure all necessary TPM2 components are set up using AES encryption:
     - Primary key (RSA key used as parent for AES key)
     - AES-256 encryption key (created under primary key with proper attributes for EncryptDecrypt)
     - Encrypted file store (using AES)
-    
+
     This function checks if components exist by trying to use them first.
     Only creates components if they don't exist on the server.
     Uses AES encryption which doesn't have size limitations like RSA.
-    
+
     Note: AES keys are created using tpm2_create (not primary) under a primary key.
     This ensures the AES key has proper attributes for EncryptDecrypt operations.
     The key is automatically loaded after creation, so the context file is ready to use.
-    
+
     Args:
         primary_ctx: Path to primary key context file (default: anylog_primary.ctx)
         encrypt_key_ctx: Path to AES encryption key context file (default: anylog_encrypt_key_aes.ctx)
@@ -1012,39 +807,42 @@ def _ensure_tpm_setup(
                 "tpm_available": False
             }
         tpm_available = True
-        
+
         # Quick check: Try to list keys from the AES file store
         # If this succeeds, everything is already set up
         _flush_context(base_url=base_url)
         test_result = _make_request("POST", "/tpm2/file-store-aes/list-keys",
-                                   json_data={
-                                       "context_file": encrypt_key_ctx,
-                                       "store_name": store_name
-                                   },
-                                   base_url=base_url)
-        
+                                    json_data={
+                                        "context_file": encrypt_key_ctx,
+                                        "store_name": store_name
+                                    },
+                                    base_url=base_url)
+
         if test_result.get("success"):
             # Everything is already set up, we can use it
             return {"success": True, "tpm_available": tpm_available}
-        
+
         # If we get here, the file store either doesn't exist or keys aren't loaded
-        # Check if the encrypted file store file exists in the container's working directory
+        # Check if the encrypted file store file exists (even if we can't decrypt it)
         # This helps us determine if we need recovery blobs or can create new keys
         # Note: store_name is relative to the container's working directory (/opt/shared)
-        # We check via REST API instead of direct file access
+        # which maps to ./shared_dir on the host. We check if it exists there.
         store_exists = False
         try:
-            # Use REST API to list files in working directory and check if store exists
-            list_result = _list_working_directory_files(base_url=base_url)
-            if list_result and list_result.get("success"):
-                files = list_result.get("files", [])
-                # Extract just the filename from store_name in case there's any path component
-                store_filename = Path(store_name).name
-                store_exists = store_filename in files
+            # Try to check if the file exists in the shared directory
+            # The store_name is typically just a filename like "anylog_key_store.json"
+            # and it's saved in the working directory which is /opt/shared in container
+            # which maps to ./shared_dir on host
+            store_path = Path(store_name)
+            if store_path.is_absolute():
+                store_exists = store_path.exists()
+            else:
+                # Check in current directory and common shared_dir location
+                store_exists = store_path.exists() or Path(f"shared_dir/{store_name}").exists()
         except Exception:
-            # If we can't check via API, assume it doesn't exist and proceed
+            # If we can't check, assume it doesn't exist and proceed
             store_exists = False
-        
+
         # Step 1: Create or reload primary key (RSA key used as parent for AES key)
         # IMPORTANT: TPM primary keys are non-deterministic - each creation produces a different key.
         # The AES key blobs are tied to the parent primary key, so we need the SAME primary key
@@ -1060,17 +858,17 @@ def _ensure_tpm_setup(
         # Solution: If recovery blobs are provided, we assume TPM state is persisted and
         # the primary key exists. We'll try to use it without creating a new one.
         # If recovery blobs are NOT provided and file store doesn't exist, create new keys.
-        
+
         _flush_context(base_url=base_url)
-        
+
         if not store_exists:
             primary_result = _make_request("POST", "/tpm2/create-primary",
-                                          json_data={
-                                              "hierarchy": "o",
-                                              "context_file": primary_ctx
-                                          },
-                                          base_url=base_url)
-            
+                                           json_data={
+                                               "hierarchy": "o",
+                                               "context_file": primary_ctx
+                                           },
+                                           base_url=base_url)
+
             # Check primary key creation result
             if not primary_result.get("success"):
                 error_msg = primary_result.get("error", "").lower()
@@ -1085,7 +883,7 @@ def _ensure_tpm_setup(
         # Step 2: Create or reload AES-256 encryption key under the primary key
         # Priority: Recovery blobs > Create new key
         # We do NOT try to load from .pub/.priv files - those should not be in shared_dir
-        
+
         _flush_context(base_url=base_url)
         result = None
         created_new_aes_key = False
@@ -1105,12 +903,12 @@ def _ensure_tpm_setup(
         # File store doesn't exist - create new AES key
         _flush_context(base_url=base_url)
         result = _make_request("POST", "/tpm2/create-key",
-                              json_data={
-                                  "parent_context": primary_ctx,  # Use primary key as parent
-                                  "key_type": "aes256",
-                                  "public_file": encrypt_key_ctx,  # Will create .pub and .priv, then load into .ctx
-                              },
-                              base_url=base_url)
+                               json_data={
+                                   "parent_context": primary_ctx,  # Use primary key as parent
+                                   "key_type": "aes256",
+                                   "public_file": encrypt_key_ctx,  # Will create .pub and .priv, then load into .ctx
+                               },
+                               base_url=base_url)
         created_new_aes_key = True
 
         # Check if the key was created and loaded successfully
@@ -1138,61 +936,49 @@ def _ensure_tpm_setup(
                 if result.get("public_file") and result.get("private_file"):
                     _flush_context(base_url=base_url)
                     load_result = _make_request("POST", "/tpm2/load-key",
-                                              json_data={
-                                                  "parent_context": primary_ctx,
-                                                  "public_file": result.get("public_file"),
-                                                  "private_file": result.get("private_file"),
-                                                  "context_file": encrypt_key_ctx
-                                              },
-                                              base_url=base_url)
+                                                json_data={
+                                                    "parent_context": primary_ctx,
+                                                    "public_file": result.get("public_file"),
+                                                    "private_file": result.get("private_file"),
+                                                    "context_file": encrypt_key_ctx
+                                                },
+                                                base_url=base_url)
                     if not load_result.get("success"):
                         return {
                             "success": False,
                             "error": f"AES key created but failed to load: {load_result.get('error', 'Unknown error')}",
                             "tpm_available": tpm_available
                         }
-        
-        # Clean up .pub and .priv files whenever they exist
-        # These temporary blob files should be removed via REST API once the key is loaded into the TPM
+
         if created_new_aes_key and result and result.get("success"):
-            # Clean up after creating new key (with extra paths from API response)
             _cleanup_aes_blob_files(
                 encrypt_key_ctx,
-                extra_paths=[result.get("public_file"), result.get("private_file")],
-                base_url=base_url
+                extra_paths=[result.get("public_file"), result.get("private_file")]
             )
             recovery_material = result.get("recovery_material")
             if recovery_material:
                 public_blob = recovery_material.get("public_blob_b64")
                 private_blob = recovery_material.get("private_blob_b64")
-        else:
-            # Even if no new key was just created, clean up any existing .pub/.priv files
-            # This ensures cleanup happens if files exist from previous runs
-            _cleanup_aes_blob_files(
-                encrypt_key_ctx,
-                extra_paths=None,
-                base_url=base_url
-            )
 
         # Step 3: Create AES encrypted file store (only if it doesn't exist)
         # Try to list keys first to check if store exists
         _flush_context(base_url=base_url)
         check_store = _make_request("POST", "/tpm2/file-store-aes/list-keys",
+                                    json_data={
+                                        "context_file": encrypt_key_ctx,
+                                        "store_name": store_name
+                                    },
+                                    base_url=base_url)
+
+        if not check_store.get("success"):
+            # Store doesn't exist, create it
+            _flush_context(base_url=base_url)
+            result = _make_request("POST", "/tpm2/file-store-aes/create",
                                    json_data={
                                        "context_file": encrypt_key_ctx,
                                        "store_name": store_name
                                    },
                                    base_url=base_url)
-        
-        if not check_store.get("success"):
-            # Store doesn't exist, create it
-            _flush_context(base_url=base_url)
-            result = _make_request("POST", "/tpm2/file-store-aes/create",
-                                  json_data={
-                                      "context_file": encrypt_key_ctx,
-                                      "store_name": store_name
-                                  },
-                                  base_url=base_url)
             # If creation fails with "already exists" type error, that's okay
             # But if it's a real error (like wrong key), we should report it
             if not result.get("success"):
@@ -1201,17 +987,17 @@ def _ensure_tpm_setup(
                 if "already exists" not in error_msg and "file exists" not in error_msg:
                     # Try one more time to verify the store works
                     verify_result = _make_request("POST", "/tpm2/file-store-aes/list-keys",
-                                                 json_data={
-                                                     "context_file": encrypt_key_ctx,
-                                                     "store_name": store_name
-                                                 },
-                                                 base_url=base_url)
+                                                  json_data={
+                                                      "context_file": encrypt_key_ctx,
+                                                      "store_name": store_name
+                                                  },
+                                                  base_url=base_url)
                     if not verify_result.get("success"):
                         return {
                             "success": False,
                             "error": f"Failed to create or verify AES encrypted file store: {result.get('error', 'Unknown error')}"
                         }
-        
+
         payload = {"success": True, "tpm_available": tpm_available}
         if recovery_material:
             payload["recovery_material"] = recovery_material
@@ -1226,18 +1012,18 @@ def _ensure_tpm_setup(
             "error": f"Error during TPM setup: {str(e)}",
             "tpm_available": False
         }
-        
+
 
 def recover_aes_key_from_recovery_material(
-    *,
-    private_blob_b64: Optional[str] = None,
-    public_blob_b64: Optional[str] = None,
-    private_blob_path: Optional[str] = None,
-    public_blob_path: Optional[str] = None,
-    primary_ctx: str = DEFAULT_PRIMARY_CTX,
-    encrypt_key_ctx: str = DEFAULT_ENCRYPT_KEY_CTX,
-    store_name: str = DEFAULT_STORE_NAME,
-    base_url: str = DEFAULT_API_URL
+        *,
+        private_blob_b64: Optional[str] = None,
+        public_blob_b64: Optional[str] = None,
+        private_blob_path: Optional[str] = None,
+        public_blob_path: Optional[str] = None,
+        primary_ctx: str = DEFAULT_PRIMARY_CTX,
+        encrypt_key_ctx: str = DEFAULT_ENCRYPT_KEY_CTX,
+        store_name: str = DEFAULT_STORE_NAME,
+        base_url: str = DEFAULT_API_URL
 ) -> Dict[str, Any]:
     """
     Use AES recovery blobs/files to rebuild the AES key and unlock the encrypted store.
@@ -1284,21 +1070,21 @@ def recover_aes_key_from_recovery_material(
 
 
 def write_key_to_tpm(
-    key: str,
-    secret: str,
-    primary_ctx: str = DEFAULT_PRIMARY_CTX,
-    encrypt_key_ctx: str = DEFAULT_ENCRYPT_KEY_CTX,
-    store_name: str = DEFAULT_STORE_NAME,
-    base_url: str = DEFAULT_API_URL
+        key: str,
+        secret: str,
+        primary_ctx: str = DEFAULT_PRIMARY_CTX,
+        encrypt_key_ctx: str = DEFAULT_ENCRYPT_KEY_CTX,
+        store_name: str = DEFAULT_STORE_NAME,
+        base_url: str = DEFAULT_API_URL
 ) -> Dict[str, Any]:
     """
     Write a key-secret pair to the TPM2 encrypted file store using AES encryption.
-    
+
     This function stores a key (identifier) and secret (pubkey or privkey) in the
     AES-encrypted file store. It automatically handles initialization of the TPM2
     components if they don't exist. Uses HTTP requests to communicate with the REST API.
     AES encryption doesn't have size limitations like RSA, so large secrets can be stored.
-    
+
     Args:
         key: The key identifier (e.g., "node_pubkey", "wallet_privkey")
         secret: The secret value to store (pubkey or privkey) - can be any size
@@ -1322,7 +1108,7 @@ def write_key_to_tpm(
             store_name=store_name,
             base_url=base_url,
         )
-        
+
         if not setup_result.get("success"):
             if setup_result.get("needs_recovery"):
                 return {
@@ -1333,23 +1119,23 @@ def write_key_to_tpm(
                     "tpm_available": setup_result.get("tpm_available", False)
                 }
             return setup_result
-        
+
         # Flush context before storing
         _flush_context(base_url=base_url)
-        
+
         # Store the key-value pair via REST API using AES encryption
         result = _make_request("POST", "/tpm2/file-store-aes/store",
-                              json_data={
-                                  "context_file": encrypt_key_ctx,
-                                  "store_name": store_name,
-                                  "key": key,
-                                  "value": secret
-                              },
-                              base_url=base_url)
-        
+                               json_data={
+                                   "context_file": encrypt_key_ctx,
+                                   "store_name": store_name,
+                                   "key": key,
+                                   "value": secret
+                               },
+                               base_url=base_url)
+
         # Flush context after storing
         _flush_context(base_url=base_url)
-        
+
         if result.get("success"):
             payload = {
                 "success": True,
@@ -1363,7 +1149,7 @@ def write_key_to_tpm(
                 "success": False,
                 "error": f"Failed to store key: {result.get('error', 'Unknown error')}"
             }
-            
+
     except Exception as e:
         _flush_context(base_url=base_url)  # Try to flush on error
         return {
@@ -1373,19 +1159,19 @@ def write_key_to_tpm(
 
 
 def read_key_from_tpm(
-    key: str,
-    primary_ctx: str = DEFAULT_PRIMARY_CTX,
-    encrypt_key_ctx: str = DEFAULT_ENCRYPT_KEY_CTX,
-    store_name: str = DEFAULT_STORE_NAME,
-    base_url: str = DEFAULT_API_URL
+        key: str,
+        primary_ctx: str = DEFAULT_PRIMARY_CTX,
+        encrypt_key_ctx: str = DEFAULT_ENCRYPT_KEY_CTX,
+        store_name: str = DEFAULT_STORE_NAME,
+        base_url: str = DEFAULT_API_URL
 ) -> Dict[str, Any]:
     """
     Read a key-secret pair from the TPM2 encrypted file store using AES decryption.
-    
+
     This function retrieves a secret (pubkey or privkey) associated with a key
     identifier from the AES-encrypted file store. It automatically handles initialization
     of the TPM2 components if they don't exist. Uses HTTP requests to communicate with the REST API.
-    
+
     Args:
         key: The key identifier to retrieve (e.g., "node_pubkey", "wallet_privkey")
         primary_ctx: Path to primary key context file (default: anylog_primary.ctx)
@@ -1406,7 +1192,7 @@ def read_key_from_tpm(
             store_name=store_name,
             base_url=base_url,
         )
-        
+
         if not setup_result.get("success"):
             if setup_result.get("needs_recovery"):
                 return {
@@ -1417,22 +1203,22 @@ def read_key_from_tpm(
                     "tpm_available": setup_result.get("tpm_available", False)
                 }
             return setup_result
-        
+
         # Flush context before retrieving
         _flush_context(base_url=base_url)
-        
+
         # Retrieve the key-value pair via REST API using AES decryption
         result = _make_request("POST", "/tpm2/file-store-aes/retrieve",
-                              json_data={
-                                  "context_file": encrypt_key_ctx,
-                                  "store_name": store_name,
-                                  "key": key
-                              },
-                              base_url=base_url)
-        
+                               json_data={
+                                   "context_file": encrypt_key_ctx,
+                                   "store_name": store_name,
+                                   "key": key
+                               },
+                               base_url=base_url)
+
         # Flush context after retrieving
         _flush_context(base_url=base_url)
-        
+
         if result.get("success"):
             payload = {
                 "success": True,
@@ -1446,7 +1232,7 @@ def read_key_from_tpm(
             # Provide a more helpful error message
             error_msg = result.get("error", "Unknown error")
             available_keys = result.get("available_keys", [])
-            
+
             # Check if the error indicates the key doesn't exist
             if "not found" in error_msg.lower() or "not found in file store" in error_msg.lower():
                 if available_keys:
@@ -1461,13 +1247,13 @@ def read_key_from_tpm(
                         "error": f"Key '{key}' not found in file store. The file store is empty - you need to write the key first using write_key_to_tpm().",
                         "available_keys": available_keys
                     }
-            
+
             return {
                 "success": False,
                 "error": error_msg,
                 "available_keys": available_keys
             }
-            
+
     except Exception as e:
         _flush_context(base_url=base_url)  # Try to flush on error
         return {
@@ -1475,145 +1261,123 @@ def read_key_from_tpm(
             "error": f"Error reading key from TPM: {str(e)}"
         }
 
-
-# Example usage
-if __name__ == "__main__":
-    # Recovery flow overview:
-    # 1. When _ensure_tpm_setup() creates an AES key for the first time, we capture TPM blobs
-    #    (base64) in the API response and print them with _emit_aes_recovery_material().
-    # 2. Operators should call save_recovery_material_to_directory() to persist those blobs
-    #    to disk (or other secret storage) as .priv/.pub files.
-    # 3. On a fresh container or after TPM state loss, use restore_aes_key_from_recovery()
-    #    with either the saved base64 strings or blob files to rebuild the AES context.
-    # 4. Higher-level helpers set_custom_aes_key_from_files()/set_custom_aes_key_from_base64()
-    #    wrap that restore call and optionally recreate the encrypted filestore in one shot.
-    # 5. Once the AES key is restored, read_key_from_tpm()/write_key_to_tpm() resume working
-    #    against the original encrypted data.
-    #
-    # IMPORTANT: The TPM state (tpm_state directory) MUST be persisted for recovery to work.
-    # The recovery blobs are encrypted under a specific primary key. If the TPM state is lost,
-    # the primary key changes and recovery blobs cannot be loaded.
-    #
-    # Minimal setup in shared_dir:
-    # - anylog_key_store.json (encrypted file store) - REQUIRED
-    # - tpm_state/ (TPM state including primary key) - REQUIRED for recovery to work
-    # Recovery blobs should be stored securely off-container and provided when needed.
-
-
-    # Delete everything in shared_dir/tpm_state
-    tpm_state_dir = SHARED_DIR / "tpm_state"
-    if tpm_state_dir.exists() and tpm_state_dir.is_dir():
-        for item in tpm_state_dir.iterdir():
-            try:
-                if item.is_file() or item.is_symlink():
-                    item.unlink()
-                elif item.is_dir():
-                    # Remove subdirectories and all contents
-                    import shutil
-                    shutil.rmtree(item)
-            except Exception as e:
-                print(f"Failed to remove {item}: {e}")
-        print(f"All contents of {tpm_state_dir} have been deleted.")
-    else:
-        print(f"{tpm_state_dir} does not exist or is not a directory.")
-
-
-
-    # Delete everything in shared_dir that is not a directory
-    for item in SHARED_DIR.iterdir():
-        try:
-            if item.is_file() or item.is_symlink():
-                item.unlink()
-        except Exception as e:
-            print(f"Failed to remove {item}: {e}")
-    print(f"All non-directory files in {SHARED_DIR} have been deleted.")
-
-
-
-    import subprocess
-    import time
-
-
-    # step 0: restart docker compose
-    print("\nRestarting Docker Compose stack...")
-
-    try:
-        subprocess.run(["docker-compose", "down"], check=True)
-        print("Docker Compose stack stopped. Waiting 5 seconds before starting up...")
-        time.sleep(5)
-        subprocess.run(["docker-compose", "up", "-d"], check=True)
-        time.sleep(5)
-        print("Docker Compose stack restarted successfully.")
-    except subprocess.CalledProcessError as e:
-        print(f"Error restarting Docker Compose stack: {e}")
-
-
-
-    # 1. write to tpm
-    print("Writing pubkey to TPM...")
-    result = write_key_to_tpm("pubkey", """-----BEGIN PUBLIC KEY-----
-MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDZqVfeViSx34IzP5XL3bxA08vD
-hgrQu3JStfQl2rjETY3O5hmUs/A2ZKKRZgBQvTO70cIYaS5rQoz0Be96iOdEwOmb
-Rt+ky3Zh4iQBTPRWWK1x7F/r1K8PBSTX+kKdcawSTTTtWUyC3O8U1GxzzukonZQx
-2EriSsxeoR+3ynW3TwIDAQAB
------END PUBLIC KEY-----""")
-    print(f"Write result: {result}")
-
-    recovery_material = result.get("recovery_material")
-    if recovery_material:
-        public_blob = recovery_material.get("public_blob_b64")
-        private_blob = recovery_material.get("private_blob_b64")
-        print(f"Public blob: {public_blob}")
-        print(f"Private blob: {private_blob}")
-    else:
-        print("No recovery material found")
-
-    # Step 2: Read the pubkey back
-
-    print("\nReading pubkey from TPM...")
-    result = read_key_from_tpm("pubkey")
-    print(f"Read result: {result}")
-
-
-
-    # step 3. restart docker compose
-
-    print("\nRestarting Docker Compose stack...")
-
-    try:
-        subprocess.run(["docker-compose", "down"], check=True)
-        print("Docker Compose stack stopped. Waiting 5 seconds before starting up...")
-        time.sleep(5)
-        subprocess.run(["docker-compose", "up", "-d"], check=True)
-        time.sleep(5)
-        print("Docker Compose stack restarted successfully.")
-    except subprocess.CalledProcessError as e:
-        print(f"Error restarting Docker Compose stack: {e}")
-
-
-
-    print("Writing pubkey2 to TPM...")
-    result = write_key_to_tpm("pubkey2", "TESTING TO SEE IF IT WORKS WITH OUT RESTORE")
-    print(f"Write result: {result}")
-
-    print("\nReading pubkey again after recovery attempt...")
-    result = read_key_from_tpm("pubkey")
-    print(f"Read result: {result}")
-
-
-    # step 4. recovery helper
-    print("\nRestoring AES key via recovery material...")
-    recovery_result = recover_aes_key_from_recovery_material(
-        private_blob_b64=private_blob,
-        public_blob_b64=public_blob,
-    )
-    print(f"Recovery result: {recovery_result}")
-
-
-    # step 5. test read key from tpm
-
-    print("\nReading pubkey again after recovery attempt...")
-    result = read_key_from_tpm("pubkey")
-    print(f"Read result: {result}")
-
-    
+#
+# # Example usage
+# if __name__ == "__main__":
+#     # Recovery flow overview:
+#     # 1. When _ensure_tpm_setup() creates an AES key for the first time, we capture TPM blobs
+#     #    (base64) in the API response and print them with _emit_aes_recovery_material().
+#     # 2. Operators should call save_recovery_material_to_directory() to persist those blobs
+#     #    to disk (or other secret storage) as .priv/.pub files.
+#     # 3. On a fresh container or after TPM state loss, use restore_aes_key_from_recovery()
+#     #    with either the saved base64 strings or blob files to rebuild the AES context.
+#     # 4. Higher-level helpers set_custom_aes_key_from_files()/set_custom_aes_key_from_base64()
+#     #    wrap that restore call and optionally recreate the encrypted filestore in one shot.
+#     # 5. Once the AES key is restored, read_key_from_tpm()/write_key_to_tpm() resume working
+#     #    against the original encrypted data.
+#     #
+#     # IMPORTANT: The TPM state (tpm_state directory) MUST be persisted for recovery to work.
+#     # The recovery blobs are encrypted under a specific primary key. If the TPM state is lost,
+#     # the primary key changes and recovery blobs cannot be loaded.
+#     #
+#     # Minimal setup in shared_dir:
+#     # - anylog_key_store.json (encrypted file store) - REQUIRED
+#     # - tpm_state/ (TPM state including primary key) - REQUIRED for recovery to work
+#     # Recovery blobs should be stored securely off-container and provided when needed.
+#
+#     # Delete everything in shared_dir/tpm_state
+#     tpm_state_dir = SHARED_DIR / "tpm_state"
+#     if tpm_state_dir.exists() and tpm_state_dir.is_dir():
+#         for item in tpm_state_dir.iterdir():
+#             try:
+#                 if item.is_file() or item.is_symlink():
+#                     item.unlink()
+#                 elif item.is_dir():
+#                     # Remove subdirectories and all contents
+#                     import shutil
+#
+#                     shutil.rmtree(item)
+#             except Exception as e:
+#                 print(f"Failed to remove {item}: {e}")
+#         print(f"All contents of {tpm_state_dir} have been deleted.")
+#     else:
+#         print(f"{tpm_state_dir} does not exist or is not a directory.")
+#
+#     # Delete everything in shared_dir that is not a directory
+#     for item in SHARED_DIR.iterdir():
+#         try:
+#             if item.is_file() or item.is_symlink():
+#                 item.unlink()
+#         except Exception as e:
+#             print(f"Failed to remove {item}: {e}")
+#     print(f"All non-directory files in {SHARED_DIR} have been deleted.")
+#
+#     import subprocess
+#     import time
+#
+#     # step 0: restart docker compose
+#     print("\nRestarting Docker Compose stack...")
+#
+#     try:
+#         subprocess.run(["docker-compose", "down"], check=True)
+#         print("Docker Compose stack stopped. Waiting 5 seconds before starting up...")
+#         time.sleep(5)
+#         subprocess.run(["docker-compose", "up", "-d"], check=True)
+#         time.sleep(5)
+#         print("Docker Compose stack restarted successfully.")
+#     except subprocess.CalledProcessError as e:
+#         print(f"Error restarting Docker Compose stack: {e}")
+#
+#     # 1. write to tpm
+#     print("Writing pubkey to TPM...")
+#     result = write_key_to_tpm("pubkey", """-----BEGIN PUBLIC KEY-----
+# MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDZqVfeViSx34IzP5XL3bxA08vD
+# hgrQu3JStfQl2rjETY3O5hmUs/A2ZKKRZgBQvTO70cIYaS5rQoz0Be96iOdEwOmb
+# Rt+ky3Zh4iQBTPRWWK1x7F/r1K8PBSTX+kKdcawSTTTtWUyC3O8U1GxzzukonZQx
+# 2EriSsxeoR+3ynW3TwIDAQAB
+# -----END PUBLIC KEY-----""")
+#     print(f"Write result: {result}")
+#
+#     recovery_material = result.get("recovery_material")
+#     if recovery_material:
+#         public_blob = recovery_material.get("public_blob_b64")
+#         private_blob = recovery_material.get("private_blob_b64")
+#         print(f"Public blob: {public_blob}")
+#         print(f"Private blob: {private_blob}")
+#     else:
+#         print("No recovery material found")
+#
+#     # Step 2: Read the pubkey back
+#
+#     print("\nReading pubkey from TPM...")
+#     result = read_key_from_tpm("pubkey")
+#     print(f"Read result: {result}")
+#
+#     # step 3. restart docker compose
+#
+#     print("\nRestarting Docker Compose stack...")
+#
+#     try:
+#         subprocess.run(["docker-compose", "down"], check=True)
+#         print("Docker Compose stack stopped. Waiting 5 seconds before starting up...")
+#         time.sleep(5)
+#         subprocess.run(["docker-compose", "up", "-d"], check=True)
+#         time.sleep(5)
+#         print("Docker Compose stack restarted successfully.")
+#     except subprocess.CalledProcessError as e:
+#         print(f"Error restarting Docker Compose stack: {e}")
+#
+#     # step 4. recovery helper
+#     print("\nRestoring AES key via recovery material...")
+#     recovery_result = recover_aes_key_from_recovery_material(
+#         private_blob_b64=private_blob,
+#         public_blob_b64=public_blob,
+#     )
+#     print(f"Recovery result: {recovery_result}")
+#
+#     # step 5. test read key from tpm
+#
+#     print("\nReading pubkey again after recovery attempt...")
+#     result = read_key_from_tpm("pubkey")
+#     print(f"Read result: {result}")
+#

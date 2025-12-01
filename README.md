@@ -632,6 +632,17 @@ curl http://localhost:8000/health
 # Test complete workflow
 curl -X POST http://localhost:8000/tpm2/workflow/complete
 ```
+
+## Lockout Mode
+- **DA Lockout Mode**:  
+  If you encounter DA (Dictionary Attack) lockout mode (often indicated by errors related to TPM authorization or failed attempts), you will need to reset the lockout state. To do this, open a shell in the running container (e.g., using `docker exec -it <container_name> /bin/bash`) and run the following command to clear lockout and set a high maximum tries value:
+
+  ```
+  tpm2_dictionarylockout --setup-parameters --max-tries=4294967295 --clear-lockout
+  ```
+
+  This command clears any lockout and increases the allowed number of failed authorization attempts, greatly reducing the chance of future lockout events. Make sure you have the necessary TPM permissions inside the container to execute this command.
+
 <!-- 
 ## Files Structure
 

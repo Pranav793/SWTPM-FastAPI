@@ -1436,6 +1436,132 @@ class TPM2API:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    def list_files(self, directory: str = ".") -> Dict[str, Any]:
+        """
+        List files in the working directory.
+        
+        Args:
+            directory: Relative path to directory to list (default: current directory)
+            
+        Returns:
+            Dictionary with list of files
+        """
+        try:
+            # Ensure the path is relative and within working directory for security
+            if os.path.isabs(directory) or ".." in directory:
+                return {
+                    "success": False,
+                    "error": f"Invalid directory path: {directory}. Only relative paths within working directory are allowed."
+                }
+            
+            # Normalize the path
+            normalized_dir = os.path.normpath(directory)
+            
+            # Get current working directory for debugging
+            cwd = os.getcwd()
+            
+            # Check if directory exists
+            if not os.path.exists(normalized_dir):
+                return {
+                    "success": False,
+                    "error": f"Directory '{normalized_dir}' does not exist (current working directory: {cwd})"
+                }
+            
+            if not os.path.isdir(normalized_dir):
+                return {
+                    "success": False,
+                    "error": f"'{normalized_dir}' is not a directory"
+                }
+            
+            # List all files in the directory
+            files = []
+            directories = []
+            try:
+                for item in os.listdir(normalized_dir):
+                    item_path = os.path.join(normalized_dir, item)
+                    if os.path.isfile(item_path):
+                        files.append(item)
+                    elif os.path.isdir(item_path):
+                        directories.append(item)
+            except PermissionError as e:
+                return {
+                    "success": False,
+                    "error": f"Permission denied listing directory '{normalized_dir}': {str(e)}"
+                }
+            
+            return {
+                "success": True,
+                "files": sorted(files),
+                "directories": sorted(directories),
+                "directory": normalized_dir,
+                "current_working_directory": cwd,
+                "total_files": len(files),
+                "total_directories": len(directories)
+            }
+            
+        except PermissionError as e:
+            return {
+                "success": False,
+                "error": f"Permission denied: {str(e)}"
+            }
+        except Exception as e:
+            import traceback
+            error_detail = f"{str(e)}\nTraceback: {traceback.format_exc()}"
+            return {
+                "success": False,
+                "error": f"Failed to list files: {error_detail}"
+            }
+
+    def delete_file(self, file_path: str) -> Dict[str, Any]:
+        """
+        Delete a file from the working directory.
+        
+        Args:
+            file_path: Relative path to the file in the working directory
+            
+        Returns:
+            Dictionary with deletion result
+        """
+        try:
+            # Ensure the path is relative and within working directory for security
+            # Don't allow paths with .. to prevent directory traversal
+            if os.path.isabs(file_path) or ".." in file_path:
+                return {
+                    "success": False,
+                    "error": f"Invalid file path: {file_path}. Only relative paths within working directory are allowed."
+                }
+            
+            # Normalize the path
+            normalized_path = os.path.normpath(file_path)
+            
+            # Check if file exists
+            if not os.path.exists(normalized_path):
+                return {
+                    "success": False,
+                    "error": f"File '{normalized_path}' does not exist"
+                }
+            
+            # Delete the file
+            os.unlink(normalized_path)
+            
+            return {
+                "success": True,
+                "message": f"File '{normalized_path}' deleted successfully",
+                "file_path": normalized_path,
+                "action": "file_deleted"
+            }
+            
+        except PermissionError as e:
+            return {
+                "success": False,
+                "error": f"Permission denied: {str(e)}"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Failed to delete file: {str(e)}"
+            }
+
 # Example usage
 if __name__ == "__main__":
     # Initialize TPM2 API

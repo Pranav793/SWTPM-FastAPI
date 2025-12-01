@@ -25,9 +25,43 @@ services:
       - TPM2TOOLS_TCTI=swtpm:host=127.0.0.1,port=2321
     restart: unless-stopped
 
-# mkdir -p shared_dir && chmod 777 shared_dir
+
+#   anylog-node:
+#     image: anylogco/anylog-network:tpm-beta
+#     restart: always
+#     env_file:
+#       -  ../../../docker-compose/docker-makefiles/generic-configs/base_configs.env
+#       -  ../../../docker-compose/docker-makefiles/generic-configs/advance_configs.env
+#       -  ../../../docker-compose/docker-makefiles/.env
+#     container_name: anylog-node
+#     stdin_open: true
+#     tty: true
+#     devices:
+#       - "/dev/net/tun:/dev/net/tun"
+#     cap_add:
+#       - NET_ADMIN
+#     network_mode: host
+#     volumes:
+#       - anylog-node-anylog:/app/AnyLog-Network/anylog
+#       - anylog-node-blockchain:/app/AnyLog-Network/blockchain
+#       - anylog-node-data:/app/AnyLog-Network/data
+#       - anylog-node-local-scripts:/app/deployment-scripts
+#       - /var/run/docker.sock:/var/run/docker.sock
 
 
-# first time setup:
-#    mkdir -p shared_dir/tpm_state && chmod 777 shared_dir shared_dir/tpm_state
-#    docker-compose up -d
+# volumes:
+#   anylog-node-anylog:
+#   anylog-node-blockchain:
+#   anylog-node-data:
+#   anylog-node-local-scripts:
+
+
+
+
+
+# # # mkdir -p shared_dir && chmod 777 shared_dir
+
+
+# # # first time setup:
+# # #    mkdir -p shared_dir/tpm_state && chmod 777 shared_dir shared_dir/tpm_state
+# # #    docker-compose up -d

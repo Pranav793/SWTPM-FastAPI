@@ -205,11 +205,11 @@ def _make_request(method: str, endpoint: str, json_data: Optional[Dict[str, Any]
 def _check_api_connectivity(base_url: str = DEFAULT_API_URL, timeout: int = 5) -> Dict[str, Any]:
     """
     Check if the TPM2 REST API at base_url is reachable and responding.
-    
+
     Args:
         base_url: Base URL for the API
         timeout: Timeout in seconds for the connectivity check (default: 5)
-    
+
     Returns:
         Dictionary with success status and any errors
     """
@@ -223,7 +223,7 @@ def _check_api_connectivity(base_url: str = DEFAULT_API_URL, timeout: int = 5) -
         except requests.exceptions.RequestException:
             # Health endpoint might not exist, try the root endpoint
             pass
-        
+
         # If health endpoint doesn't work, try the root endpoint
         try:
             response = requests.get(base_url, timeout=timeout)
@@ -301,7 +301,7 @@ def _ensure_tpm_setup(
                 "success": False,
                 "error": connectivity_check.get("error", "API connectivity check failed")
             }
-        
+
         # Quick check: Try to list keys from the AES file store
         # If this succeeds, everything is already set up
         _flush_context(base_url=base_url)
@@ -317,58 +317,27 @@ def _ensure_tpm_setup(
             return {"success": True}
 
         # If we get here, something is missing. Let's set up step by step.
-        # First, try to reload existing context files if they exist (after container restart)
 
-        # Step 1: Create or reload primary key (RSA key used as parent for AES key)
+        # Step 1: Create primary key (RSA key used as parent for AES key)
         _flush_context(base_url=base_url)
-        primary_result = _make_request("POST", "/tpm2/create-primary",
-                                      json_data={
-                                          "hierarchy": "o",
-                                          "context_file": primary_ctx
-                                      },
-                                      base_url=base_url)
-        
-        # Check primary key creation result
-        # If it failed, check if it's because it already exists (which is okay)
-        # Otherwise, report the error
-        if not primary_result.get("success"):
-            error_msg = primary_result.get("error", "").lower()
-            # If the error is not about the key already existing, report it
-            if "already exists" not in error_msg and "file exists" not in error_msg:
-                # Primary key creation failed for an unexpected reason
-                return {
-                    "success": False,
-                    "error": f"Failed to create primary key: {primary_result.get('error', 'Unknown error')}"
-                }
-            # If it's an "already exists" error, that's fine - the key exists in TPM state
+        _make_request("POST", "/tpm2/create-primary",
+                      json_data={
+                          "hierarchy": "o",
+                          "context_file": primary_ctx
+                      },
+                      base_url=base_url)
+        # Continue even if it fails - it might already exist
 
-        # Step 2: Create or reload AES-256 encryption key under the primary key
-        # First, try to reload the AES key if the .pub and .priv files exist
+        # Step 2: Create AES-256 encryption key under the primary key
+        # The API will automatically create the key with tpm2_create and load it
         _flush_context(base_url=base_url)
-        # Check if we can load the existing AES key (if .pub and .priv files exist)
-        # The encrypt_key_ctx parameter is used as the base name, so .pub and .priv should exist
-        load_aes_result = _make_request("POST", "/tpm2/load-key",
-                                       json_data={
-                                           "parent_context": primary_ctx,
-                                           "public_file": encrypt_key_ctx.replace('.ctx', '.pub') if encrypt_key_ctx.endswith('.ctx') else f"{encrypt_key_ctx}.pub",
-                                           "private_file": encrypt_key_ctx.replace('.ctx', '.priv') if encrypt_key_ctx.endswith('.ctx') else f"{encrypt_key_ctx}.priv",
-                                           "context_file": encrypt_key_ctx
-                                       },
-                                       base_url=base_url)
-        
-        # If loading failed, try to create a new AES key
-        if not load_aes_result.get("success"):
-            _flush_context(base_url=base_url)
-            result = _make_request("POST", "/tpm2/create-key",
-                                   json_data={
-                                       "parent_context": primary_ctx,  # Use primary key as parent
-                                       "key_type": "aes256",
-                                       "public_file": encrypt_key_ctx,  # Will create .pub and .priv, then load into .ctx
-                                   },
-                                   base_url=base_url)
-        else:
-            # Successfully loaded existing AES key
-            result = load_aes_result
+        result = _make_request("POST", "/tpm2/create-key",
+                               json_data={
+                                   "parent_context": primary_ctx,  # Use primary key as parent
+                                   "key_type": "aes256",
+                                   "public_file": encrypt_key_ctx,  # Will create .pub and .priv, then load into .ctx
+                               },
+                               base_url=base_url)
 
         # Check if the key was created and loaded successfully
         if not result.get("success"):
@@ -625,18 +594,18 @@ def read_key_from_tpm(
             "error": f"Error reading key from TPM: {str(e)}"
         }
 
-
-# Example usage
-if __name__ == "__main__":
-    # # Step 1: Set up Docker container (run this before using TPM functions)
-    # print("Setting up Docker container...")
-    # docker_result = setup_docker_container()
-    # if not docker_result.get("success"):
-    #     print(f"Failed to set up Docker container: {docker_result.get('error')}")
-    #     exit(1)
-    # print(f"Docker setup: {docker_result.get('message')}\n")
-
-    # Step 2: Write a pubkey
+#
+# # Example usage
+# if __name__ == "__main__":
+#     # Step 1: Set up Docker container (run this before using TPM functions)
+#     print("Setting up Docker container...")
+#     docker_result = setup_docker_container()
+#     if not docker_result.get("success"):
+#         print(f"Failed to set up Docker container: {docker_result.get('error')}")
+#         exit(1)
+#     print(f"Docker setup: {docker_result.get('message')}\n")
+#
+#     # Step 2: Write a pubkey
 #     print("Writing pubkey to TPM...")
 #     result = write_key_to_tpm("pubkey", """-----BEGIN PUBLIC KEY-----
 # MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDZqVfeViSx34IzP5XL3bxA08vD
@@ -645,12 +614,12 @@ if __name__ == "__main__":
 # 2EriSsxeoR+3ynW3TwIDAQAB
 # -----END PUBLIC KEY-----""")
 #     print(f"Write result: {result}")
-
-    # Step 3: Read the pubkey back
-    print("\nReading pubkey from TPM...")
-    result = read_key_from_tpm("pubkey")
-    print(f"Read result: {result}")
-
-    # if result.get("success"):
-    #     print(f"Retrieved value: {result.get('value')}")
-
+#
+#     # Step 3: Read the pubkey back
+#     print("\nReading pubkey from TPM...")
+#     result = read_key_from_tpm("pubkey")
+#     print(f"Read result: {result}")
+#
+#     # if result.get("success"):
+#     #     print(f"Retrieved value: {result.get('value')}")
+#

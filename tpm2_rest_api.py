@@ -150,6 +150,12 @@ class DeleteKeyValueAESRequest(BaseModel):
     store_name: str
     key: str
 
+class DeleteFileRequest(BaseModel):
+    file_path: str  # Relative path to file in working directory
+
+class ListFilesRequest(BaseModel):
+    directory: str = "."  # Relative path to directory to list (default: current directory)
+
 
 # Health check endpoint
 @app.get("/")
@@ -723,12 +729,85 @@ async def upload_key(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/tpm2/list-files")
+async def list_files_get(directory: str = "."):
+    """List files in the working directory (GET endpoint for easy testing)"""
+    if tpm_api is None:
+        return JSONResponse(
+            content={"success": False, "error": "TPM2 API not available"},
+            status_code=503
+        )
+    
+    try:
+        result = tpm_api.list_files(directory=directory)
+        
+        if result["success"]:
+            return JSONResponse(content=result, status_code=200)
+        else:
+            return JSONResponse(
+                content={"success": False, "error": result.get("error", "Unknown error")},
+                status_code=400
+            )
+            
+    except Exception as e:
+        import traceback
+        return JSONResponse(
+            content={"success": False, "error": f"{str(e)}\n{traceback.format_exc()}"},
+            status_code=500
+        )
+
+@app.post("/tpm2/list-files")
+async def list_files(request: ListFilesRequest = ListFilesRequest()):
+    """List files in the working directory"""
+    if tpm_api is None:
+        return JSONResponse(
+            content={"success": False, "error": "TPM2 API not available"},
+            status_code=503
+        )
+    
+    try:
+        result = tpm_api.list_files(directory=request.directory)
+        
+        if result["success"]:
+            return JSONResponse(content=result, status_code=200)
+        else:
+            # Return error in JSON format instead of raising HTTPException
+            # This allows _make_request to parse the error properly
+            return JSONResponse(
+                content={"success": False, "error": result.get("error", "Unknown error")},
+                status_code=400
+            )
+            
+    except Exception as e:
+        import traceback
+        return JSONResponse(
+            content={"success": False, "error": f"{str(e)}\n{traceback.format_exc()}"},
+            status_code=500
+        )
+
+@app.post("/tpm2/delete-file")
+async def delete_file(request: DeleteFileRequest):
+    """Delete a file from the working directory"""
+    if tpm_api is None:
+        raise HTTPException(status_code=503, detail="TPM2 API not available")
+    
+    try:
+        result = tpm_api.delete_file(file_path=request.file_path)
+        
+        if result["success"]:
+            return JSONResponse(content=result, status_code=200)
+        else:
+            raise HTTPException(status_code=400, detail=result["error"])
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 if __name__ == "__main__":
     # Run the FastAPI server
     uvicorn.run(
         "tpm2_rest_api:app",
         host="0.0.0.0",
-        port=8010,
+        port=8000,
         reload=True,
         log_level="info"
     ) 
