@@ -15,16 +15,90 @@ TEMP_DECRYPTED_AES_FILE = "temp_decrypted_aes.json"
 class TPM2API:
     """
     Python API for TPM2 operations using tpm2 command-line tools
+    
+    Supports both software TPM (SWTPM) and hardware TPM devices.
+    The TCTI (TPM Command Transmission Interface) can be configured via:
+    - Constructor parameter: tcti_name
+    - Environment variable: TPM2_TCTI (takes precedence)
+    - Auto-detection: If no TCTI is specified, will try hardware TPM first, then SWTPM
     """
     
-    def __init__(self, tcti_name: str = "swtpm:host=127.0.0.1,port=2321"):
+    @staticmethod
+    def _detect_hardware_tpm() -> Optional[str]:
+        """
+        Detect if a hardware TPM is available and return appropriate TCTI
+        
+        Returns:
+            TCTI string if hardware TPM detected, None otherwise
+        """
+        # Check for TPM Resource Manager device (preferred, doesn't require root)
+        if os.path.exists("/dev/tpmrm0"):
+            return "device:/dev/tpmrm0"
+        
+        # Check for direct TPM device (requires root or tss group membership)
+        if os.path.exists("/dev/tpm0"):
+            return "device:/dev/tpm0"
+        
+        # Check if tabrmd daemon is available (recommended for production)
+        try:
+            result = subprocess.run(
+                ["systemctl", "is-active", "--quiet", "tpm2-abrmd"],
+                capture_output=True,
+                timeout=2
+            )
+            if result.returncode == 0:
+                return "tabrmd:"
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            pass
+        
+        return None
+    
+    @staticmethod
+    def _get_tcti_from_env() -> Optional[str]:
+        """Get TCTI configuration from environment variable"""
+        return os.environ.get("TPM2_TCTI") or os.environ.get("TSS2_TCTI") or os.environ.get("TPM2TOOLS_TCTI")
+    
+    def __init__(self, tcti_name: Optional[str] = None):
         """
         Initialize TPM2 API
         
         Args:
-            tcti_name: TCTI configuration (default: swtpm for Docker container)
+            tcti_name: TCTI configuration. If None, will:
+                      1. Check TPM2_TCTI environment variable
+                      2. Try to auto-detect hardware TPM
+                      3. Fall back to SWTPM default (swtpm:host=127.0.0.1,port=2321)
+        
+        Examples:
+            # Use hardware TPM (auto-detected)
+            tpm = TPM2API()
+            
+            # Use specific hardware TPM device
+            tpm = TPM2API("device:/dev/tpmrm0")
+            
+            # Use tabrmd daemon
+            tpm = TPM2API("tabrmd:")
+            
+            # Use SWTPM
+            tpm = TPM2API("swtpm:host=127.0.0.1,port=2321")
         """
-        self.tcti_name = tcti_name
+        # Priority: explicit parameter > environment variable > auto-detect > default
+        if tcti_name is not None:
+            self.tcti_name = tcti_name
+        else:
+            env_tcti = self._get_tcti_from_env()
+            if env_tcti:
+                self.tcti_name = env_tcti
+                print(f"Using TCTI from environment: {self.tcti_name}")
+            else:
+                # Try to auto-detect hardware TPM
+                hw_tpm = self._detect_hardware_tpm()
+                if hw_tpm:
+                    self.tcti_name = hw_tpm
+                    print(f"Auto-detected hardware TPM: {self.tcti_name}")
+                else:
+                    self.tcti_name = "swtpm:host=127.0.0.1,port=2321"
+                    print(f"No hardware TPM detected, using SWTPM default: {self.tcti_name}")
+        
         self._set_environment()
         self._test_connection()
     

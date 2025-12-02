@@ -609,9 +609,52 @@ When you encounter "out of memory for object contexts" errors:
 2. Retry your operation
 
 ### TCTI Configuration
-The API automatically configures the TCTI for swtpm:
-- `TSS2_TCTI=swtpm:host=127.0.0.1,port=2321`
-- `TPM2TOOLS_TCTI=swtpm:host=127.0.0.1,port=2321`
+The API supports both hardware TPM and software TPM (SWTPM). TCTI configuration priority:
+1. Explicit parameter when creating `TPM2API()` instance
+2. `TPM2_TCTI` environment variable (or `TSS2_TCTI`/`TPM2TOOLS_TCTI`)
+3. Auto-detection of hardware TPM
+4. Default to SWTPM: `swtpm:host=127.0.0.1,port=2321`
+
+#### Hardware TPM Configuration
+For hardware TPM on Ubuntu/Linux systems, the API will auto-detect and use:
+- `/dev/tpmrm0` (TPM Resource Manager - preferred, no root required)
+- `/dev/tpm0` (Direct device access - requires root or tss group)
+- `tabrmd:` (TPM2 Access Broker daemon - if running)
+
+**Manual Configuration:**
+```bash
+# Using environment variable (recommended)
+export TPM2_TCTI="device:/dev/tpmrm0"
+python3 tpm2_rest_api.py
+
+# Or for tabrmd daemon
+export TPM2_TCTI="tabrmd:"
+python3 tpm2_rest_api.py
+```
+
+**In Python code:**
+```python
+from tpm2_api import TPM2API
+
+# Auto-detect hardware TPM
+tpm = TPM2API()
+
+# Or specify explicitly
+tpm = TPM2API("device:/dev/tpmrm0")
+tpm = TPM2API("tabrmd:")
+```
+
+**Prerequisites for Hardware TPM:**
+1. Install TPM2 tools: `sudo apt-get install tpm2-tools tpm2-abrmd`
+2. Ensure user is in `tss` group: `sudo usermod -aG tss $USER` (then log out/in)
+3. Verify TPM device exists: `ls -l /dev/tpm*`
+4. (Optional) Start tabrmd daemon: `sudo systemctl start tpm2-abrmd`
+
+**SSH to Remote Hardware TPM:**
+When SSH'ing to a remote Ubuntu machine with hardware TPM:
+1. Ensure TPM2 tools are installed on the remote machine
+2. The API will auto-detect the hardware TPM when running on that machine
+3. No special configuration needed - just run the API normally
 
 ## Development
 

@@ -6,10 +6,8 @@ TPM2 REST API - FastAPI wrapper for TPM2 operations
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, validator
-from typing import Optional, Dict, Any, Union
+from typing import Any, Union
 import uvicorn
-import os
-import json
 
 # Import our TPM2 API
 from tpm2_api import TPM2API
@@ -17,13 +15,16 @@ from tpm2_api import TPM2API
 # Initialize FastAPI app
 app = FastAPI(
     title="TPM2 REST API",
-    description="REST API for TPM2 operations using software TPM emulator",
+    description="REST API for TPM2 operations supporting both hardware TPM and software TPM emulator",
     version="1.0.0"
 )
 
 # Initialize TPM2 API
+# TCTI can be configured via TPM2_TCTI environment variable
+# If not set, will auto-detect hardware TPM or use SWTPM default
 try:
     tpm_api = TPM2API()
+    print(f"TPM2 API initialized with TCTI: {tpm_api.tcti_name}")
 except Exception as e:
     print(f"Warning: TPM2 API initialization failed: {e}")
     tpm_api = None

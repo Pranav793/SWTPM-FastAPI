@@ -1,0 +1,20 @@
+
+Used OpenVPN to login to the maddog box
+
+
+using the command 'ls /dev/tpm*' to check for tpm directories
+
+also 'sudo dmesg | grep -i tpm' for tpm stuff
+
+
+Install tpm tools:
+- sudo apt-get install tpm2-tools # Install if not already present
+- sudo tpm2_getcap properties-fixed
+
+
+Might need to run shit with sudo :/
+
+Adds user to the tss group, now has full access to run stuff (reload session to gain effects)
+- sudo usermod -aG tss $USER
+
+
