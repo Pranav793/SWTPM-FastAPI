@@ -1,3 +1,4 @@
+Notes:
 
 Used OpenVPN to login to the maddog box
 
@@ -17,4 +18,78 @@ Might need to run shit with sudo :/
 Adds user to the tss group, now has full access to run stuff (reload session to gain effects)
 - sudo usermod -aG tss $USER
 
+Lowkey lets use this command for tpm-tools
+- sudo apt-get install tpm2-tools tpm2-abrmd
 
+
+trying to create venv, needed to install:
+- sudo apt install python3.12-venv
+
+
+for resetting:
+- curl -X POST http://localhost:8000/tpm2/full-reset
+or
+# Clear owner hierarchy (most common)
+sudo tpm2_clear -c o
+
+# Flush all contexts
+tpm2_flushcontext -t -l -s
+
+# Remove persistent objects
+sudo tpm2_evictcontrol -C o -c 0x81010001
+
+
+
+
+
+
+
+get private key fails (good)
+get public key fails (needs fixing)
+
+
+signed by regular key
+{'member' : {'id' : 'user_01',
+             'type' : 'user',
+             'name' : 'roy',
+             'public_key' : 'MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC6i1aMEpOiSrhePG7pMU7+65iM'
+                            'PTnwJcCTasersD8EaiXNLUGFDQv5Y20AGtAu/o/5PvCxmNjf+O08BCU+vMtkdMpV'
+                            'UN4K1iAmy+s8AIa0pcgNbZOv44sDswUL/4/X7J40dGGL7GqP1Co3BtZw4YJ6Xn5w'
+                            'ZCUEmvEMcufd637I/wIDAQAB',
+             'date' : '2025-12-11T01:33:03.410033Z',
+             'signature' : 'b6ffa07075f845db49d16cea8a0d1c7a8ddc08365b594ba041eb21ca0759283a'
+                           '96f62f49c93140de1dabbd4ca36b42646c2322ad65d5e6b1619b2da8e7dc0de1'
+                           'bb6eb485bc9ffdd416ab572093831ce183b675c68fb8d83fd92fb8d129335a8b'
+                           'aefca28ebfc3db4da4ee9a0365abab6173455116d9741c32b964ba777392c07f'}}
+
+
+signed by tpm key
+{'member' : {'id' : 'user_001',
+             'type' : 'user',
+             'name' : 'roy',
+             'public_key' : 'MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCw+XHcwcNs58VODILioo7a04o2'
+                            'e/S6SPT1VXijTOVkcUnpPxgu276Ln6UaAlDw+g9qr0hxt87mibsyg13dbwcDwqnH'
+                            'Juvc4hM3nrNqwwMsvSVBfEb++5Y6Yz+aXg4dXVbCFl3LtTFj4YoYb9EdFkthaDLF'
+                            'FgXwd3pSP61qPh9AfQIDAQAB',
+             'date' : '2025-12-11T03:01:21.494169Z',
+             'signature' : '6803a60a890af237e9c6d8a772eef4cf5466a88024ebc844823f729bcc881653'
+                           '46216b13982d8201cdef42df20b6eb18eb2b9c1115fe0684b418c41658b55dab'
+                           'c1a449667fbd55d2c09b730529a1723725accf1a8cdd2d622018495e6521b13b'
+                           '290a9f1ed2fd0d8659ba24e9b656651cd3967b9df55d0ae72c08ab7cdbb24f27'}}
+
+anylog generated pubkey
+-----BEGIN PUBLIC KEY-----
+MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDEXM5YJFlP9Me9R+dh5J3xkNs2
+OxVe/SJ7+iJy4kcxDwcF6D0xpvktd6kH6AqUXfwtyUxEC0A+oPfPP2YbtxROz5Wp
+xuaseqVt8H6gyORznx+9iv+fjVCCoqpQ2Sd0xvZEVlyRKz9JA8tPUU5tOOL1YmbX
+Tg0zWhM74OHCn9jMFQIDAQAB
+-----END PUBLIC KEY-----
+
+
+tpm generated pubkey
+-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAz05IJtjSGbmsR2PY00lv
+K5mibRtwZxcZIMNOSqAlM/NubELNE3+5hRH8qU9I+YHjFgBgNmZeHA7cczaNdjUI
+e7RM58TgUCeiXJGR8l91DnDAcNLf1eqsvEjW+1N+yxLM/nYXhQO9R19dIQvrDX5h
+XuXh8+3cpVVYUBURCciIjORC
+-----END PUBLIC KEY-----

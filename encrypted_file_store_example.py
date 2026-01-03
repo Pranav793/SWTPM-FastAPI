@@ -18,6 +18,20 @@ import requests
 import json
 import time
 
+
+def trim_at_slash(s):
+    """
+    If s contains "/", return substring before the first "/".
+    Otherwise, return s unchanged.
+    """
+    idx = s.find("/")
+    if idx != -1:
+        return s[:idx]
+    return s
+
+
+
+
 # API base URL
 BASE_URL = "http://localhost:8000"
 

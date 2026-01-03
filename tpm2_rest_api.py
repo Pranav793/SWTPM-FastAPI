@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, validator
 from typing import Any, Union
 import uvicorn
+import os
 
 # Import our TPM2 API
 from tpm2_api import TPM2API
@@ -33,12 +34,21 @@ except Exception as e:
 class PrimaryKeyRequest(BaseModel):
     hierarchy: str = "o"
     context_file: str = "primary.ctx"
+    key_size: int = 1024  # RSA key size in bits (1024 or 2048, default: 1024 to match AnyLog)
 
 class CreateKeyRequest(BaseModel):
     parent_context: str
     key_type: str = "rsa"
     public_file: str = "key.pub"
     private_file: str = "key.priv"
+    key_size: int = 1024  # RSA key size in bits (1024 or 2048, default: 1024 to match AnyLog)
+
+class ImportKeyRequest(BaseModel):
+    parent_context: str
+    key_type: str = "rsa"
+    private_key_file: str  # External private key file (PEM format)
+    public_file: str = "imported_key.pub"
+    private_file: str = "imported_key.priv"
 
 class LoadKeyRequest(BaseModel):
     parent_context: str
@@ -77,11 +87,18 @@ class SignDataRequest(BaseModel):
     context_file: str
     data: str  # base64 encoded data
     signature_file: str = "signature.sig"
+    output_format: str = "hex"  # "hex" (like regular keys) or "base64" (TPM format)
 
 class VerifySignatureRequest(BaseModel):
     context_file: str
     data: str  # base64 encoded data
-    signature: str  # base64 encoded signature
+    signature: str  # hex string (like regular keys) or base64 encoded TPM format
+    signature_format: str = "auto"  # "hex", "base64", or "auto" (detect automatically)
+
+class ReadPublicKeyRequest(BaseModel):
+    context_file: str
+    output_format: str = "pem"  # 'pem' or 'der'
+    standardize: bool = True  # Convert to standard SubjectPublicKeyInfo format for cryptography library
 
 class EncryptDataRequest(BaseModel):
     context_file: str
@@ -188,7 +205,8 @@ async def create_primary_key(request: PrimaryKeyRequest):
     try:
         result = tpm_api.create_primary_key(
             hierarchy=request.hierarchy,
-            context_file=request.context_file
+            context_file=request.context_file,
+            key_size=request.key_size
         )
         
         if result["success"]:
@@ -209,6 +227,30 @@ async def create_key(request: CreateKeyRequest):
         result = tpm_api.create_key(
             parent_context=request.parent_context,
             key_type=request.key_type,
+            public_file=request.public_file,
+            private_file=request.private_file,
+            key_size=request.key_size
+        )
+        
+        if result["success"]:
+            return JSONResponse(content=result, status_code=200)
+        else:
+            raise HTTPException(status_code=400, detail=result["error"])
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/tpm2/import-key")
+async def import_key(request: ImportKeyRequest):
+    """Import an externally generated key into TPM format"""
+    if tpm_api is None:
+        raise HTTPException(status_code=503, detail="TPM2 API not available")
+    
+    try:
+        result = tpm_api.import_key(
+            parent_context=request.parent_context,
+            key_type=request.key_type,
+            private_key_file=request.private_key_file,
             public_file=request.public_file,
             private_file=request.private_file
         )
@@ -307,7 +349,8 @@ async def sign_data(request: SignDataRequest):
         result = tpm_api.sign_data(
             context_file=request.context_file,
             data=request.data,
-            signature_file=request.signature_file
+            signature_file=request.signature_file,
+            output_format=request.output_format
         )
         
         if result["success"]:
@@ -328,7 +371,8 @@ async def verify_signature(request: VerifySignatureRequest):
         result = tpm_api.verify_signature(
             context_file=request.context_file,
             data=request.data,
-            signature=request.signature
+            signature=request.signature,
+            signature_format=request.signature_format
         )
         
         if result["success"]:
@@ -339,7 +383,26 @@ async def verify_signature(request: VerifySignatureRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
+@app.post("/tpm2/read-public-key")
+async def read_public_key(request: ReadPublicKeyRequest):
+    """Read the public key from a loaded key context"""
+    if tpm_api is None:
+        raise HTTPException(status_code=503, detail="TPM2 API not available")
+    
+    try:
+        result = tpm_api.read_public_key(
+            context_file=request.context_file,
+            output_format=request.output_format,
+            standardize=request.standardize
+        )
+        
+        if result["success"]:
+            return JSONResponse(content=result, status_code=200)
+        else:
+            raise HTTPException(status_code=400, detail=result["error"])
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/tpm2/encrypt")
 async def encrypt_data(request: EncryptDataRequest):
@@ -804,11 +867,32 @@ async def delete_file(request: DeleteFileRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
+    import sys
+    
+    # Get port from command line argument, environment variable, or default to 8000
+    port = 8000
+    if len(sys.argv) > 1:
+        try:
+            port = int(sys.argv[1])
+        except ValueError:
+            print(f"Invalid port number: {sys.argv[1]}. Using default port 8000.")
+            port = 8000
+    else:
+        # Check environment variable if no command line argument
+        port = int(os.environ.get("TPM2_API_PORT", "8000"))
+    
+    # Get host from environment variable, default to 0.0.0.0
+    host = os.environ.get("TPM2_API_HOST", "0.0.0.0")
+    
+    print(f"Starting TPM2 REST API on {host}:{port}")
+    print(f"Access the API at: http://localhost:{port}")
+    print(f"Health check: http://localhost:{port}/health")
+    
     # Run the FastAPI server
     uvicorn.run(
         "tpm2_rest_api:app",
-        host="0.0.0.0",
-        port=8000,
+        host=host,
+        port=port,
         reload=True,
         log_level="info"
     ) 

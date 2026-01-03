@@ -12,6 +12,36 @@ from typing import Dict, List, Optional, Any
 
 TEMP_DECRYPTED_AES_FILE = "temp_decrypted_aes.json"
 
+def ensure_starts_with_newline(s: str) -> str:
+    """
+    Ensure the string starts with a newline character.
+    If it already starts with '\n', return as-is; otherwise, prepend '\n'.
+    """
+    if s.startswith("\n"):
+        return s
+    return "\n" + s
+
+
+def base64_to_pem_public_key(public_key_b64: str) -> str:
+    """
+    Convert a base64-encoded public key to PEM format with headers.
+    This is useful when you have a base64 public key and need to load it
+    with load_pem_public_key() from the cryptography library.
+    
+    Args:
+        public_key_b64: Base64-encoded public key (without PEM headers)
+        
+    Returns:
+        PEM-formatted public key string with headers
+    """
+    pem_lines = ["-----BEGIN PUBLIC KEY-----"]
+    # Split base64 into 64-character lines
+    for i in range(0, len(public_key_b64), 64):
+        pem_lines.append(public_key_b64[i:i+64])
+    pem_lines.append("-----END PUBLIC KEY-----")
+    return "\n".join(pem_lines)
+
+
 class TPM2API:
     """
     Python API for TPM2 operations using tpm2 command-line tools
@@ -187,23 +217,30 @@ class TPM2API:
         except Exception as e:
             return {"success": False, "error": str(e)}
     
-    def create_primary_key(self, hierarchy: str = "o", context_file: str = "primary.ctx") -> Dict[str, Any]:
+    def create_primary_key(self, hierarchy: str = "o", context_file: str = "primary.ctx", 
+                          key_size: int = 1024) -> Dict[str, Any]:
         """
         Create a primary key in the specified hierarchy
         
         Args:
             hierarchy: TPM hierarchy ('o' for owner, 'e' for endorsement, 'p' for platform)
             context_file: File to save the primary key context
+            key_size: RSA key size in bits (1024 or 2048, default: 1024 to match AnyLog)
             
         Returns:
             Dictionary with key information
         """
         try:
+            # Validate key size
+            if key_size not in [1024, 2048]:
+                return {"success": False, "error": f"Unsupported key size: {key_size}. Use 1024 or 2048"}
+            
+            key_alg = f"rsa{key_size}"
             cmd = [
                 'tpm2_createprimary',
                 '-C', hierarchy,
                 '-c', context_file,
-                '-G', 'rsa2048',
+                '-G', key_alg,
                 '-g', 'sha256'
             ]
             
@@ -234,7 +271,8 @@ class TPM2API:
             return {"success": False, "error": str(e)}
     
     def create_key(self, parent_context: str, key_type: str = "rsa", 
-                   public_file: str = "key.pub", private_file: str = "key.priv") -> Dict[str, Any]:
+                   public_file: str = "key.pub", private_file: str = "key.priv",
+                   key_size: int = 1024) -> Dict[str, Any]:
         """
         Create a key under the specified parent
         
@@ -243,6 +281,8 @@ class TPM2API:
             key_type: Type of key ('rsa', 'ecc', 'aes128', 'aes256')
             public_file: File to save the public key (for RSA/ECC) or key context (for AES)
             private_file: File to save the private key (for RSA/ECC) or not used (for AES)
+            key_size: RSA key size in bits (1024 or 2048, default: 1024 to match AnyLog)
+                      Only used when key_type is 'rsa'
             
         Returns:
             Dictionary with key information
@@ -261,7 +301,10 @@ class TPM2API:
                     aes_priv_file = (private_file if private_file != "key.priv" else public_file + '.priv')
             
             if key_type.lower() == "rsa":
-                key_alg = "rsa2048"
+                # Validate key size
+                if key_size not in [1024, 2048]:
+                    return {"success": False, "error": f"Unsupported RSA key size: {key_size}. Use 1024 or 2048"}
+                key_alg = f"rsa{key_size}"
                 cmd = [
                     'tpm2_create',
                     '-C', parent_context,
@@ -401,6 +444,55 @@ class TPM2API:
         except Exception as e:
             return {"success": False, "error": str(e)}
     
+    def import_key(self, parent_context: str, key_type: str, private_key_file: str,
+                   public_file: str = "imported_key.pub", private_file: str = "imported_key.priv") -> Dict[str, Any]:
+        """
+        Import an externally generated key into TPM format
+        
+        Args:
+            parent_context: Parent key context file
+            key_type: Type of key ('rsa', 'ecc')
+            private_key_file: File containing the external private key (PEM format)
+            public_file: File to save the TPM-formatted public key
+            private_file: File to save the TPM-formatted private key
+            
+        Returns:
+            Dictionary with result
+        """
+        try:
+            if key_type.lower() == "rsa":
+                key_alg = "rsa2048"
+            elif key_type.lower() == "ecc":
+                key_alg = "ecc256"
+            else:
+                return {"success": False, "error": f"Unsupported key type for import: {key_type}"}
+            
+            cmd = [
+                'tpm2_import',
+                '-C', parent_context,
+                '-G', key_alg,
+                '-i', private_key_file,
+                '-u', public_file,
+                '-r', private_file
+            ]
+            
+            result = self._run_command(cmd)
+            
+            if result['success']:
+                return {
+                    "success": True,
+                    "public_file": public_file,
+                    "private_file": private_file,
+                    "key_type": key_type,
+                    "parent_context": parent_context,
+                    "action": "key_imported"
+                }
+            else:
+                return result
+                
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+    
     def make_persistent(self, context_file: str, persistent_handle: int = 0x81010001) -> Dict[str, Any]:
         """
         Make a key persistent in TPM
@@ -501,7 +593,8 @@ class TPM2API:
         except Exception as e:
             return {"success": False, "error": str(e)}
     
-    def sign_data(self, context_file: str, data: str, signature_file: str = "signature.sig") -> Dict[str, Any]:
+    def sign_data(self, context_file: str, data: str, signature_file: str = "signature.sig", 
+                  output_format: str = "hex") -> Dict[str, Any]:
         """
         Sign data using a loaded key
         
@@ -509,9 +602,11 @@ class TPM2API:
             context_file: Key context file
             data: Data to sign (base64 encoded)
             signature_file: File to save the signature
+            output_format: Output format for signature - "hex" (like regular keys) or "base64" (TPM format)
+                          Default: "hex" to match regular key signature format
             
         Returns:
-            Dictionary with result
+            Dictionary with result containing signature in the requested format
         """
         try:
             # Decode base64 data
@@ -523,12 +618,18 @@ class TPM2API:
                 temp_data_file = temp_file.name
             
             try:
+                # tpm2_sign syntax: tpm2_sign -c key_context -g hash_alg -s scheme -o signature_file message_file
+                # -o is for signature output file, -s is for signing scheme
+                # -s rsapss uses PSS padding (matches AnyLog's padding.PSS)
+                # -s rsassa uses PKCS1v1.5 padding (default, but doesn't match AnyLog)
+                # The message file is passed as a positional argument (not with -d, which is for digests)
                 cmd = [
                     'tpm2_sign',
                     '-c', context_file,
                     '-g', 'sha256',
-                    '-m', temp_data_file,
-                    '-s', signature_file
+                    '-s', 'rsapss',  # Use PSS padding to match AnyLog's padding.PSS
+                    '-o', signature_file,
+                    temp_data_file  # Message file as positional argument
                 ]
                 
                 result = self._run_command(cmd)
@@ -538,10 +639,33 @@ class TPM2API:
                     with open(signature_file, 'rb') as f:
                         signature_data = f.read()
                     
+                    # Extract raw RSA signature from TPMT_SIGNATURE structure
+                    # TPMT_SIGNATURE format:
+                    # - 2 bytes: sigAlg (UINT16) = 0x0014 (TPM_ALG_RSASSA) or 0x0016 (TPM_ALG_RSAPSS)
+                    # - 2 bytes: hashAlg (UINT16) = 0x000B (TPM_ALG_SHA256)
+                    # - 2 bytes: signature size (UINT16, big-endian)
+                    # - N bytes: raw RSA signature value
+                    raw_signature = None
+                    if len(signature_data) >= 6:
+                        # sig_alg = int.from_bytes(signature_data[0:2], 'big')  # 0x0016 for RSAPSS, 0x0014 for RSASSA
+                        sig_size = int.from_bytes(signature_data[4:6], 'big')
+                        if len(signature_data) >= 6 + sig_size:
+                            raw_signature = signature_data[6:6+sig_size]
+                    
+                    # Format signature based on requested format
+                    if output_format == "hex" and raw_signature:
+                        # Convert to hex format like regular keys
+                        signature_output = raw_signature.hex()
+                    else:
+                        # Return base64 encoded TPM format (original behavior)
+                        signature_output = base64.b64encode(signature_data).decode()
+                    
                     return {
                         "success": True,
-                        "signature": base64.b64encode(signature_data).decode(),
+                        "signature": signature_output,
                         "signature_file": signature_file,
+                        "signature_format": output_format,
+                        "raw_signature_length": len(raw_signature) if raw_signature else None,
                         "action": "data_signed"
                     }
                 else:
@@ -554,14 +678,125 @@ class TPM2API:
         except Exception as e:
             return {"success": False, "error": str(e)}
     
-    def verify_signature(self, context_file: str, data: str, signature: str) -> Dict[str, Any]:
+    def read_public_key(self, context_file: str, output_format: str = "pem", 
+                       standardize: bool = True) -> Dict[str, Any]:
+        """
+        Read the public key from a loaded key context
+        
+        Args:
+            context_file: Key context file
+            output_format: Output format ('pem' or 'der', default: 'pem')
+            standardize: If True, convert to standard SubjectPublicKeyInfo format 
+                        compatible with cryptography library (default: True)
+            
+        Returns:
+            Dictionary with public key data (base64 encoded) or error
+        """
+        try:
+            if output_format not in ["pem", "der"]:
+                return {"success": False, "error": f"Unsupported format: {output_format}. Use 'pem' or 'der'"}
+            
+            # Create temporary file for output
+            with tempfile.NamedTemporaryFile(delete=False, suffix=f".{output_format}") as temp_file:
+                temp_output_file = temp_file.name
+            
+            try:
+                # tpm2_readpublic -c context_file -f format -o output_file
+                cmd = [
+                    'tpm2_readpublic',
+                    '-c', context_file,
+                    '-f', output_format,
+                    '-o', temp_output_file
+                ]
+                
+                result = self._run_command(cmd)
+                
+                if result['success']:
+                    # Read the public key file
+                    with open(temp_output_file, 'rb') as f:
+                        public_key_data = f.read()
+                    
+                    # Standardize the format if requested (for compatibility with cryptography library)
+                    if standardize and output_format == "pem":
+                        try:
+                            # Try to load and re-encode using cryptography library
+                            # This ensures it's in the exact format expected by load_pem_public_key
+                            from cryptography.hazmat.primitives import serialization
+                            from cryptography.hazmat.primitives.serialization import load_pem_public_key
+                            from cryptography.hazmat.backends import default_backend
+                            
+                            # Load the TPM public key
+                            public_key = load_pem_public_key(public_key_data, backend=default_backend())
+                            
+                            # Re-encode in standard SubjectPublicKeyInfo format
+                            # This matches the format used by regular keys
+                            standardized_pem = public_key.public_bytes(
+                                encoding=serialization.Encoding.PEM,
+                                format=serialization.PublicFormat.SubjectPublicKeyInfo
+                            )
+                            
+                            public_key_data = standardized_pem
+                            
+                        except Exception:
+                            # If standardization fails, use original format
+                            # This allows fallback if cryptography library has issues
+                            pass
+                    
+                    # Return as base64 encoded string
+                    public_key_b64 = base64.b64encode(public_key_data).decode()
+                    
+                    # For PEM format, also return as text for convenience
+                    public_key_text = None
+                    if output_format == "pem":
+                        try:
+                            public_key_text = public_key_data.decode('utf-8')
+                            # Ensure it has PEM headers (in case it's just base64 content)
+                            if public_key_text and not public_key_text.strip().startswith('-----BEGIN'):
+                                # Convert base64 to PEM format
+                                pem_lines = ["-----BEGIN PUBLIC KEY-----"]
+                                # Split base64 into 64-character lines
+                                for i in range(0, len(public_key_b64), 64):
+                                    pem_lines.append(public_key_b64[i:i+64])
+                                pem_lines.append("-----END PUBLIC KEY-----")
+                                public_key_text = "\n".join(pem_lines)
+                        except UnicodeDecodeError:
+                            # If decode fails, construct PEM from base64
+                            pem_lines = ["-----BEGIN PUBLIC KEY-----"]
+                            for i in range(0, len(public_key_b64), 64):
+                                pem_lines.append(public_key_b64[i:i+64])
+                            pem_lines.append("-----END PUBLIC KEY-----")
+                            public_key_text = "\n".join(pem_lines)
+                    
+                    return {
+                        "success": True,
+                        "public_key": public_key_b64,  # Base64 encoded (for storage)
+                        "public_key_text": public_key_text,  # Full PEM format with headers (for load_pem_public_key)
+                        "format": output_format,
+                        "standardized": standardize,
+                        "context_file": context_file
+                    }
+                else:
+                    return result
+                    
+            finally:
+                # Clean up temporary file
+                if os.path.exists(temp_output_file):
+                    os.unlink(temp_output_file)
+                    
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+    
+    def verify_signature(self, context_file: str, data: str, signature: str, 
+                        signature_format: str = "auto") -> Dict[str, Any]:
         """
         Verify a signature
         
         Args:
             context_file: Key context file
             data: Original data (base64 encoded)
-            signature: Signature to verify (base64 encoded)
+            signature: Signature to verify (hex string or base64 encoded TPM format)
+            signature_format: Format of signature - "hex", "base64", or "auto" (detect automatically)
+                            Default: "auto" - detects hex vs base64 format
             
         Returns:
             Dictionary with verification result
@@ -569,7 +804,34 @@ class TPM2API:
         try:
             # Decode base64 data
             decoded_data = base64.b64decode(data)
-            decoded_signature = base64.b64decode(signature)
+            
+            # Detect signature format if auto
+            if signature_format == "auto":
+                # Try to detect: hex strings are typically longer and only contain 0-9a-f
+                # Base64 strings are shorter and may contain +, /, = characters
+                if all(c in '0123456789abcdefABCDEF' for c in signature) and len(signature) > 100:
+                    signature_format = "hex"
+                else:
+                    signature_format = "base64"
+            
+            # Decode signature based on format
+            if signature_format == "hex":
+                # Convert hex to bytes (raw RSA signature)
+                raw_signature = bytes.fromhex(signature)
+                
+                # Reconstruct TPMT_SIGNATURE structure:
+                # - 2 bytes: sigAlg = 0x0014 (TPM_ALG_RSASSA)
+                # - 2 bytes: hashAlg = 0x000B (TPM_ALG_SHA256)
+                # - 2 bytes: signature size (UINT16, big-endian)
+                # - N bytes: raw RSA signature value
+                sig_alg = b'\x00\x14'  # TPM_ALG_RSASSA
+                hash_alg = b'\x00\x0b'  # TPM_ALG_SHA256
+                sig_size = len(raw_signature).to_bytes(2, 'big')
+                tpm_signature = sig_alg + hash_alg + sig_size + raw_signature
+                decoded_signature = tpm_signature
+            else:
+                # Base64 encoded TPM format (original behavior)
+                decoded_signature = base64.b64decode(signature)
             
             # Create temporary files
             with tempfile.NamedTemporaryFile(delete=False, mode='wb') as temp_data_file:
