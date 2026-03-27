@@ -196,6 +196,13 @@ swtpm_state/
 .dockerignore
 docker-compose.override.yml
 
+# Multiple instances (generated/runtime)
+multiple-instances/docker-compose.instances.yaml
+multiple-instances/.num_instances
+multiple-instances/shared_dir_node*/
+
+multiple-nodes/.anylog-nodes.config
+
 # Logs
 logs/
 *.log

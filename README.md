@@ -63,6 +63,16 @@ docker run --rm -it -v $(pwd):/workspace -w /workspace tpm2-api bash
 docker rm -f tpm2-test tpm2-cli 2>/dev/null; docker rmi -f tpm2-api 2>/dev/null
 ```
 
+### Multiple TPM Instances
+
+To run multiple independent TPM instances (e.g., for different nodes), use the `multiple-instances/` folder:
+
+```bash
+./multiple-instances/setup-multiple-instances.sh 5
+docker-compose -f multiple-instances/docker-compose.instances.yaml up -d
+```
+
+See **[multiple-instances/README.md](multiple-instances/README.md)** for TPM instances. For AnyLog nodes, see **[multiple-nodes/README.md](multiple-nodes/README.md)**.
 
 ## API Endpoints
 
