@@ -102,7 +102,7 @@ docker run -it \
 tpm_dir = /app/AnyLog-Network/tpm_dir/
 
 ## ON OP 1
-id create keys where password = 123 and keys_file = tpm-192.168.86.29:8001/root_key
+id create keys where password = 123 and keys_file = tpm-192.168.86.31:8001/root_key
 
 
 <member = {"member" : {  
@@ -111,19 +111,15 @@ id create keys where password = 123 and keys_file = tpm-192.168.86.29:8001/root_
     }  
 }>
 
-id sign !member where key = tpm-192.168.86.29:8001/root_key and password = 123
+id sign !member where key = tpm-192.168.86.31:8001/root_key and password = 123
 
 json !member
 
 blockchain insert where policy = !member and local = true and master = !ledger_conn
 
 
-id create keys for node where password = tpm-192.168.86.29:8001
+id create keys for node where password = tpm-192.168.86.31:8001
 
-## ON OP 2
-id create keys for node where password = tpm-192.168.86.29:8002
-
-## ON OP 1
 <member = {"member" : {
     "id"   : "node_001",
     "type" : "node",
@@ -132,13 +128,15 @@ id create keys for node where password = tpm-192.168.86.29:8002
     }
 }>
 
-id sign !member where password = tpm-192.168.86.29:8001/
+id sign !member where password = tpm-192.168.86.31:8001/
 
 json !member
 
 blockchain insert where policy = !member and local = true and master = !ledger_conn
 
 ## ON OP 2
+id create keys for node where password = tpm-192.168.86.31:8001
+
 <member = {"member" : {
     "id"   : "node_002",
     "type" : "node",
@@ -147,14 +145,14 @@ blockchain insert where policy = !member and local = true and master = !ledger_c
     }
 }>
 
-id sign !member where password = tpm-192.168.86.29:8002/
+id sign !member where password = tpm-192.168.86.31:8001/
 
 json !member
 
 blockchain insert where policy = !member and local = true and master = !ledger_conn
 
 ## ON OP 1
-id create keys where password = abc and keys_file = tpm-192.168.86.29:8001/roy
+id create keys where password = abc and keys_file = tpm-192.168.86.31:8001/roy
 
 
 <member = {"member" : {
@@ -164,7 +162,7 @@ id create keys where password = abc and keys_file = tpm-192.168.86.29:8001/roy
     }
 }>
 
-id sign !member where key = tpm-192.168.86.29:8001/roy and password = abc
+id sign !member where key = tpm-192.168.86.31:8001/roy and password = abc
 
 json !member
 
@@ -179,7 +177,7 @@ blockchain insert where policy = !member and local = true and master = !ledger_c
     }
 }>
 
-id sign !permissions where key = tpm-192.168.86.29:8001/roy and password = abc
+id sign !permissions where key = tpm-192.168.86.31:8001/root_key and password = abc
 
 json !permissions
 
@@ -198,7 +196,7 @@ member_user = blockchain get member where name = roy bring ['member']['public_ke
         }
 }>
 
-id sign !assignment where key = tpm-192.168.86.29:8001/root_key and password = 123
+id sign !assignment where key = tpm-192.168.86.31:8001/root_key and password = 123
 
 json !assignment 
 
@@ -215,7 +213,7 @@ blockchain insert where policy = !assignment and local = true  and master = !led
     }
 }>
 
-id sign !permissions where key = tpm-192.168.86.29:8001/roy and password = 123
+id sign !permissions where key = tpm-192.168.86.31:8001/roy and password = 123
 
 json !permissions
 
@@ -225,25 +223,87 @@ blockchain insert where policy = !permissions and local = true  and master = !le
 
 
 member_node1 = blockchain get member where id = node_001 bring ['member']['public_key']
-
 member_node2 = blockchain get member where id = node_002 bring ['member']['public_key']
 
 permission_id =  blockchain get permissions where name = "node basic permissions" bring ['permissions']['id']
 
 <assignment = {"assignment" : {
         "permissions"  : !permission_id,
-        "members"  : [!member_node1]
+        "members"  : [!member_node1, !member_node2]
         }
 }>
 
-id sign !assignment where key = tpm-192.168.86.29:8001/roy and password = 123
+id sign !assignment where key = tpm-192.168.86.31:8001/roy and password = 123
 
 json !assignment 
 
 blockchain insert where policy = !assignment and local = true  and master = !ledger_conn  
 
 
+## ON OP 1
+set local password = 123
+## ON OP 2
+set local password = 456
 
+
+## ON MASTER
+id create keys for node where password = tpm-192.168.86.31:8001/
+
+<member = {"member" : {  
+    "type" : "node",  
+    "name"  : "master_node"  
+    }  
+}>  
+
+id sign !member where password = tpm-192.168.86.31:8001/
+
+json !member
+
+blockchain insert where policy = !member and local = true and master = !ledger_conn
+
+## ON OP 1
+<permissions = {"permissions" : {
+    "name" : "master node permissions",
+    "enable" : [ "file", "event", "echo", "print"]
+    }
+}>
+
+id sign !permissions where key = tpm-192.168.86.31:8001/roy and password = 123
+
+json !permissions
+
+blockchain insert where policy = !permissions and local = true  and master = !ledger_conn 
+
+
+permission_id = blockchain get permissions where name = "master node permissions" bring ['permissions']['id']
+member_node = blockchain get member where name = master_node bring ['member']['public_key']
+
+<assignment = {"assignment" : {
+        "name" : "master assignment",
+        "permissions"  : !permission_id,
+        "members"  : [!member_node]
+        }
+}>
+
+id sign !assignment where key = tpm-192.168.86.31:8001/roy and password = 123
+
+json !assignment 
+
+blockchain insert where policy = !assignment and local = true  and master = !ledger_conn  
+
+
+## ON MASTER
+set local password = masterlocpsswd
+
+## ON ALL 
+
+tpm set where conn = 192.168.86.31:8001
+
+tpm enabled = on
+
+tpm get info
+
+set node authentication on
 
 
 
@@ -268,7 +328,9 @@ docker build -f Dockerfile -t anylogco/anylog-network:tpm-pp .
 
 in each node, run the following commands:
 tpm_dir = /app/AnyLog-Network/tpm_dir/
-
+enable_tpm = "true"
+tpm_ip = 192.168.86.31
+tpm_port = 8001
 
 
 
