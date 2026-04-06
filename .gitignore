@@ -200,6 +200,10 @@ docker-compose.override.yml
 multiple-instances/docker-compose.instances.yaml
 multiple-instances/.num_instances
 multiple-instances/shared_dir_node*/
+multiple-instances/tpm_shared_dir*/
+# When .instances-path points instance dirs under docs/
+docs/shared_dir_node*/
+docs/tpm_shared_dir*/
 
 multiple-nodes/.anylog-nodes.config
 

@@ -6,6 +6,10 @@ set -e
 
 INSTANCES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$INSTANCES_DIR")"
+# shellcheck source=shared-data-root.sh
+source "$INSTANCES_DIR/shared-data-root.sh"
+load_shared_data_root
+load_shared_dir_prefix
 
 # Run docker-compose from project root
 cd "$PROJECT_ROOT"
@@ -67,9 +71,19 @@ Examples:
 EOF
 }
 
-# Function to get list of all node directories
+# Function to get list of all node directory numbers (instance index)
 get_all_nodes() {
-    ls -d "$INSTANCES_DIR"/shared_dir_node* 2>/dev/null | sed "s|.*shared_dir_node||" | sort -n || echo ""
+    shopt -s nullglob
+    local d _base _n
+    for d in "$SHARED_DATA_ROOT/${SHARED_DIR_PREFIX}"[0-9]*; do
+        [ -d "$d" ] || continue
+        _base="$(basename "$d")"
+        _n="${_base#"$SHARED_DIR_PREFIX"}"
+        if [[ "$_n" =~ ^[0-9]+$ ]]; then
+            echo "$_n"
+        fi
+    done | sort -n
+    shopt -u nullglob
 }
 
 # Function to parse node list
@@ -85,7 +99,7 @@ parse_nodes() {
 # Function to check if node exists
 node_exists() {
     local node=$1
-    [ -d "$INSTANCES_DIR/shared_dir_node${node}" ]
+    [ -d "$SHARED_DATA_ROOT/${SHARED_DIR_PREFIX}${node}" ]
 }
 
 # Function to stop containers
@@ -157,7 +171,7 @@ clear_tpm_state() {
             continue
         fi
         
-        local tpm_state_dir="$INSTANCES_DIR/shared_dir_node${node}/tpm_state"
+        local tpm_state_dir="$SHARED_DATA_ROOT/${SHARED_DIR_PREFIX}${node}/tpm_state"
         local container="tpm2-api-node${node}"
         
         if docker ps -a --format '{{.Names}}' | grep -q "^${container}$"; then
@@ -202,7 +216,7 @@ clear_all_data() {
             continue
         fi
         
-        local shared_dir="$INSTANCES_DIR/shared_dir_node${node}"
+        local shared_dir="$SHARED_DATA_ROOT/${SHARED_DIR_PREFIX}${node}"
         local tpm_state_dir="${shared_dir}/tpm_state"
         local key_backups_dir="${shared_dir}/key_backups"
         local container="tpm2-api-node${node}"
@@ -247,7 +261,7 @@ delete_directories() {
             continue
         fi
         
-        local shared_dir="$INSTANCES_DIR/shared_dir_node${node}"
+        local shared_dir="$SHARED_DATA_ROOT/${SHARED_DIR_PREFIX}${node}"
         local container="tpm2-api-node${node}"
         
         if docker ps -a --format '{{.Names}}' | grep -q "^${container}$"; then
@@ -273,7 +287,7 @@ reset_all() {
         print_error "⚠️  RESET will remove ALL containers and delete ALL instance data!"
         print_warning "This includes:"
         print_warning "  - All TPM instance containers"
-        print_warning "  - All shared_dir_node* directories"
+        print_warning "  - All ${SHARED_DIR_PREFIX}* instance directories"
         print_warning "  - docker-compose.instances.yaml and .num_instances"
         echo ""
         read -p "Are you sure? (type 'yes' to confirm): " confirm_input
@@ -292,14 +306,16 @@ reset_all() {
         print_success "Containers removed"
     fi
     
-    # Delete all shared_dir_node* directories
-    for dir in "$INSTANCES_DIR"/shared_dir_node*; do
+    # Delete all instance directories for this prefix
+    shopt -s nullglob
+    for dir in "$SHARED_DATA_ROOT/${SHARED_DIR_PREFIX}"[0-9]*; do
         if [ -d "$dir" ]; then
             print_info "Deleting $(basename "$dir")..."
             rm -rf "$dir"
             print_success "Deleted $(basename "$dir")"
         fi
     done
+    shopt -u nullglob
     
     # Remove generated files
     [ -f "$INSTANCES_DIR/docker-compose.instances.yaml" ] && rm -f "$INSTANCES_DIR/docker-compose.instances.yaml" && print_success "Removed docker-compose.instances.yaml"
@@ -316,7 +332,7 @@ list_instances() {
     local nodes=$(get_all_nodes)
     
     if [ -z "$nodes" ]; then
-        print_warning "No TPM instances found in multiple-instances/"
+        print_warning "No TPM instances found under $SHARED_DATA_ROOT/"
         return
     fi
     
@@ -325,7 +341,7 @@ list_instances() {
     
     for node in $nodes; do
         local container="tpm2-api-node${node}"
-        local shared_dir="$INSTANCES_DIR/shared_dir_node${node}"
+        local shared_dir="$SHARED_DATA_ROOT/${SHARED_DIR_PREFIX}${node}"
         local api_port=$((8000 + node))
         
         local container_status="Not found"

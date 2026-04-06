@@ -11,7 +11,11 @@ cd multiple-instances
 ./setup-multiple-instances.sh 5
 
 # Or from project root in one step:
-./multiple-instances/setup-multiple-instances.sh 5
+./multiple-instances/setup-multiple-instances.sh 1
+
+# Set folder prefix and parent path (writes .instances-prefix and .instances-path), then set up N instances:
+./multiple-instances/setup-multiple-instances.sh --name tpm_shared_dir --path ../docs 3
+./multiple-instances/setup-multiple-instances.sh --help
 
 # Start all instances (run from project root):
 docker-compose -f multiple-instances/docker-compose.instances.yaml up -d
@@ -31,6 +35,29 @@ docker-compose -f multiple-instances/docker-compose.instances.yaml up -d
 ./multiple-instances/manage-instances.sh restart all
 ```
 
+### Custom parent directory for instance folders
+
+By default, instance folders are created **under** `multiple-instances/` (unless you change the data root). To put them elsewhere on the host:
+
+1. **Environment variable** (highest priority): set `SWTPM_SHARED_DATA_ROOT` to the **parent directory** that will contain the per-instance folders (`<prefix>1`, `<prefix>2`, …).  
+   Use an **absolute** path for any location on the host. If you use a relative value, it is resolved from **`multiple-instances/`** (same as the file below).
+
+2. **File** `multiple-instances/.instances-path`: one line with that parent path. Use an **absolute** path to place data outside the repo (recommended for arbitrary locations). If the line is not absolute, it is resolved from **`multiple-instances/`** (e.g. `../docs` for the project’s `docs/` folder). Lines starting with `#` are ignored.
+
+### Custom folder name prefix (default `shared_dir_node`)
+
+Each instance uses a directory named **`<prefix><instance_number>`** (no separator), e.g. `shared_dir_node1`, `mytpm1`. To change the prefix:
+
+1. **Environment variable**: `SWTPM_SHARED_DIR_PREFIX` (must be a single path component — no `/`).
+
+2. **File** `multiple-instances/.instances-prefix`: one non-comment line with that prefix. Default if unset is `shared_dir_node`.
+
+3. **Setup CLI**: `setup-multiple-instances.sh --name PREFIX` writes `.instances-prefix`; `--path PATH` writes `.instances-path` (same rules as the files above). You can pass both in one command before the instance count.
+
+After changing the prefix, run **`setup-multiple-instances.sh`** again and regenerate compose so volume paths match. Add a **`.gitignore`** rule for your pattern if needed (the repo only ignores the default `shared_dir_node*` under `multiple-instances/` and `docs/`).
+
+Scripts (`setup-multiple-instances`, `generate-docker-compose`, `manage-instances`), AnyLog node mounts (`multiple-nodes/manage-anylog-nodes.sh`), and `test-multiple-instances.py` all use the same resolution for both data root and prefix.
+
 ## Directory Structure
 
 All multiple-instance files live in `multiple-instances/`:
@@ -44,11 +71,11 @@ multiple-instances/
 ├── README.md                     # This file
 ├── docker-compose.instances.yaml # Generated (do not edit)
 ├── .num_instances                # Generated (instance count)
-└── shared_dir_node1/             # Created by setup
+└── shared_dir_node1/             # Default prefix; see .instances-prefix
     ├── tpm_state/
     ├── key_backups/
     └── signing_keys_metadata.json
-    shared_dir_node2/
+    shared_dir_node2/             # Or mytpm2/, etc.
     ...
 ```
 
@@ -59,7 +86,7 @@ multiple-instances/
 ./multiple-instances/setup-multiple-instances.sh 5
 ```
 
-Creates `multiple-instances/shared_dir_node1` through `shared_dir_node5` and generates the compose file.
+Creates `<prefix>1` … `<prefix>5` under the configured data root (default prefix `shared_dir_node`, default root `multiple-instances/`) and generates the compose file.
 
 ### 2. Start
 ```bash
@@ -109,5 +136,5 @@ For AnyLog nodes, see **[multiple-nodes/README.md](../multiple-nodes/README.md)*
 ## Troubleshooting
 
 - **Port conflicts**: `netstat -tuln | grep -E '800[0-9]|232[0-9]'`
-- **Permissions**: `chmod -R 777 multiple-instances/shared_dir_node*/`
+- **Permissions**: `chmod -R 777` on your instance directories (e.g. `multiple-instances/shared_dir_node*/` with defaults)
 - **Logs**: `$COMPOSE_CMD logs tpm2-api-node1`

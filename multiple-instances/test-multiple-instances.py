@@ -9,21 +9,75 @@ Tests that each instance:
 3. Can create keys independently
 4. Keys are isolated between instances
 
-Discovers instances from multiple-instances/.num_instances or shared_dir_node* directories.
+Discovers instances from multiple-instances/.num_instances or ${PREFIX}<N> dirs under the
+configured shared data root (same rules as shared-data-root.sh).
 """
 
 import os
+import re
 import requests
 import time
-import glob
 from pathlib import Path
 from typing import Dict, Any
 
 
-def discover_nodes() -> Dict[int, str]:
-    """Discover TPM instances from multiple-instances/ directory."""
-    # Script lives in multiple-instances/
+def get_shared_dir_prefix() -> str:
+    """Folder name prefix for instance dirs (${PREFIX}1, ${PREFIX}2, …) — matches load_shared_dir_prefix."""
     script_dir = Path(__file__).resolve().parent
+    env = os.environ.get("SWTPM_SHARED_DIR_PREFIX", "").strip()
+    if env:
+        return env
+    path_file = script_dir / ".instances-prefix"
+    if path_file.exists():
+        try:
+            for raw in path_file.read_text().splitlines():
+                s = raw.strip()
+                if s and not s.startswith("#"):
+                    return s
+        except OSError:
+            pass
+    return "shared_dir_node"
+
+
+def get_shared_data_root() -> Path:
+    """Parent directory for instance folders — matches multiple-instances/shared-data-root.sh."""
+    script_dir = Path(__file__).resolve().parent
+
+    env = os.environ.get("SWTPM_SHARED_DATA_ROOT", "").strip()
+    if env:
+        p = Path(env)
+        if not p.is_absolute():
+            p = (script_dir / env).resolve()
+        else:
+            p = p.resolve()
+        return p
+
+    path_file = script_dir / ".instances-path"
+    if path_file.exists():
+        line = ""
+        try:
+            for raw in path_file.read_text().splitlines():
+                s = raw.strip()
+                if s and not s.startswith("#"):
+                    line = s
+                    break
+        except OSError:
+            line = ""
+        if line:
+            p = Path(line)
+            if not p.is_absolute():
+                p = (script_dir / line).resolve()
+            else:
+                p = p.resolve()
+            return p
+
+    return script_dir
+
+
+def discover_nodes() -> Dict[int, str]:
+    """Discover TPM instances from the configured shared data root."""
+    script_dir = Path(__file__).resolve().parent
+    shared_root = get_shared_data_root()
 
     # NUM_INSTANCES env var
     env_num = os.environ.get("NUM_INSTANCES")
@@ -44,14 +98,22 @@ def discover_nodes() -> Dict[int, str]:
         except (ValueError, OSError):
             pass
 
-    # Discover from shared_dir_node* in multiple-instances/
-    dirs = sorted(glob.glob(str(script_dir / "shared_dir_node*")))
+    # Discover from ${PREFIX}<N> directories under shared data root
+    prefix = get_shared_dir_prefix()
+    if "/" in prefix:
+        raise ValueError("SWTPM_SHARED_DIR_PREFIX / .instances-prefix must not contain '/'")
+    pat = re.compile("^" + re.escape(prefix) + r"(\d+)$")
     nodes = {}
-    for d in dirs:
-        name = Path(d).name
-        if name.startswith("shared_dir_node") and name[14:].isdigit():
-            node_num = int(name[14:])
-            nodes[node_num] = f"http://localhost:{8000 + node_num}"
+    try:
+        for p in shared_root.iterdir():
+            if not p.is_dir():
+                continue
+            m = pat.match(p.name)
+            if m:
+                node_num = int(m.group(1))
+                nodes[node_num] = f"http://localhost:{8000 + node_num}"
+    except OSError:
+        pass
     return nodes if nodes else {1: "http://localhost:8001", 2: "http://localhost:8002", 3: "http://localhost:8003"}
 
 

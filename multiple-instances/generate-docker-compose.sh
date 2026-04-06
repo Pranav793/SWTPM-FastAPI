@@ -6,6 +6,10 @@
 set -e
 
 INSTANCES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=shared-data-root.sh
+source "$INSTANCES_DIR/shared-data-root.sh"
+load_shared_data_root
+load_shared_dir_prefix
 cd "$INSTANCES_DIR"
 
 NUM_INSTANCES=${1:-$(cat .num_instances 2>/dev/null || echo "3")}
@@ -19,6 +23,7 @@ fi
 OUTPUT_FILE="docker-compose.instances.yaml"
 
 echo "Generating $OUTPUT_FILE with $NUM_INSTANCES TPM instance(s)..."
+echo "  Volume host paths under: $SHARED_DATA_ROOT"
 
 # Write the header - build context is parent (project root) where Dockerfile lives
 cat > "$OUTPUT_FILE" << 'EOF'
@@ -31,12 +36,13 @@ version: '3.8'
 services:
 EOF
 
-# Generate each instance - volumes are relative to this compose file (multiple-instances/)
+# Generate each instance - use absolute host paths so data can live outside multiple-instances/
 for i in $(seq 1 $NUM_INSTANCES); do
     API_PORT=$((8000 + i))
     SWTPM_SERVER=$((2321 + (i - 1) * 2))
     SWTPM_CTRL=$((2322 + (i - 1) * 2))
-    
+    VOL_OPT="${SHARED_DATA_ROOT}/${SHARED_DIR_PREFIX}${i}"
+    VOL_TPM="${SHARED_DATA_ROOT}/${SHARED_DIR_PREFIX}${i}/tpm_state"
     cat >> "$OUTPUT_FILE" << EOF
 
   tpm2-api-node${i}:
@@ -47,8 +53,8 @@ for i in $(seq 1 $NUM_INSTANCES); do
     ports:
       - "${API_PORT}:8000"
     volumes:
-      - ./shared_dir_node${i}:/opt/shared
-      - ./shared_dir_node${i}/tpm_state:/tmp/tpm2-emulated
+      - "${VOL_OPT}:/opt/shared"
+      - "${VOL_TPM}:/tmp/tpm2-emulated"
     working_dir: /opt/shared
     command: sh -c "chmod 777 /opt/shared 2>/dev/null || true && mkdir -p /tmp/tpm2-emulated /opt/shared/key_backups && chmod 700 /tmp/tpm2-emulated 2>/dev/null || true && chmod 777 /opt/shared/key_backups 2>/dev/null || true && [ ! -f /opt/shared/signing_keys_metadata.json ] && echo '{}' > /opt/shared/signing_keys_metadata.json || true && cd /opt/shared && python3 /opt/tpm2_rest_api.py"
     user: root

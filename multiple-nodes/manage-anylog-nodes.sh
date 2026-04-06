@@ -1,6 +1,6 @@
 #!/bin/bash
 # Management script for AnyLog nodes with TPM
-# Spins up AnyLog nodes (master/operator/publisher/query) each connected to shared_dir_node[N]
+# Spins up AnyLog nodes (master/operator/publisher/query) each connected to an instance data dir (prefix+N)
 #
 # Port logic: +10 per same-type instance, +100 between types
 # | Node      |  TCP  |  REST | Broker |
@@ -13,7 +13,11 @@ set -e
 
 NODES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$NODES_DIR")"
-TPM_INSTANCES_DIR="$PROJECT_ROOT/multiple-instances"
+# shellcheck source=../multiple-instances/shared-data-root.sh
+source "$PROJECT_ROOT/multiple-instances/shared-data-root.sh"
+load_shared_data_root
+load_shared_dir_prefix
+TPM_INSTANCES_DIR="$SHARED_DATA_ROOT"
 CONFIG_FILE="$NODES_DIR/.anylog-nodes.config"
 ANYLOG_IMAGE="anylogco/anylog-network:tpm-pp"
 
@@ -120,10 +124,10 @@ setup_nodes() {
     done
     print_success "Config written: $CONFIG_FILE"
     print_info "Total nodes: $total"
-    # Ensure TPM instances exist (in multiple-instances/)
-    if [ "$total" -gt 0 ] && [ -f "$TPM_INSTANCES_DIR/setup-multiple-instances.sh" ]; then
-        print_info "Ensuring $total TPM instance(s) exist in multiple-instances/..."
-        "$TPM_INSTANCES_DIR/setup-multiple-instances.sh" "$total"
+    # Ensure TPM dirs exist (script lives in multiple-instances/)
+    if [ "$total" -gt 0 ] && [ -f "$PROJECT_ROOT/multiple-instances/setup-multiple-instances.sh" ]; then
+        print_info "Ensuring $total TPM instance(s) (data under $SHARED_DATA_ROOT)..."
+        "$PROJECT_ROOT/multiple-instances/setup-multiple-instances.sh" "$total"
     fi
 }
 
@@ -144,9 +148,9 @@ start_nodes() {
             local rest_base=$(get_rest_base "$type")
             local tcp_port=$((tcp_base + (node_idx - 1) * 10))
             local rest_port=$((rest_base + (node_idx - 1) * 10))
-            local shared_dir="$TPM_INSTANCES_DIR/shared_dir_node${global_idx}"
+            local shared_dir="$TPM_INSTANCES_DIR/${SHARED_DIR_PREFIX}${global_idx}"
             if [ ! -d "$shared_dir" ]; then
-                print_warning "shared_dir_node${global_idx} not found in multiple-instances/, skipping $name"
+                print_warning "${SHARED_DIR_PREFIX}${global_idx} not found under $SHARED_DATA_ROOT, skipping $name"
                 continue
             fi
             if docker ps -a --format '{{.Names}}' | grep -q "^${name}$"; then
@@ -162,7 +166,7 @@ start_nodes() {
                     local broker_port=$((broker_base + (node_idx - 1) * 10))
                     run_cmd="$run_cmd -e BROKER_PORT=$broker_port -p $broker_port:$broker_port"
                 fi
-                run_cmd="$run_cmd -v $(pwd)/multiple-instances/shared_dir_node${global_idx}:/app/AnyLog-Network/tpm_dir"
+                run_cmd="$run_cmd -v ${TPM_INSTANCES_DIR}/${SHARED_DIR_PREFIX}${global_idx}:/app/AnyLog-Network/tpm_dir"
                 run_cmd="$run_cmd --name $name $ANYLOG_IMAGE"
                 print_info "Starting $name (TCP=$tcp_port REST=$rest_port TPM=node$global_idx)..."
                 eval $run_cmd

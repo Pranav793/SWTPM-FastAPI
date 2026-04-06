@@ -35,4 +35,4 @@ Run multiple AnyLog nodes (master/operator/publisher/query), each connected to a
 
 `anylog-{type}-tpm{N}` — e.g., `anylog-master-tpm1`, `anylog-operator-tpm3`
 
-Each node mounts `multiple-instances/shared_dir_node{N}` to `/app/AnyLog-Network/tpm_dir`.
+Each node mounts `<prefix>{N}` from the configured shared data root (see `multiple-instances/README.md`: data root, `.instances-prefix` / `SWTPM_SHARED_DIR_PREFIX`) to `/app/AnyLog-Network/tpm_dir`.
